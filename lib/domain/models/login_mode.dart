@@ -1,0 +1,4 @@
+enum LoginMode {
+  dummy,
+  xOAuth,
+}

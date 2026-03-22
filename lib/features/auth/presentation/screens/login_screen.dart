@@ -14,8 +14,8 @@ class LoginScreen extends ConsumerWidget {
     final authState = ref.watch(authControllerProvider);
 
     ref.listen(authControllerProvider, (previous, next) {
-      next.whenData((user) {
-        if (user != null && context.mounted) {
+      next.whenData((auth) {
+        if (auth.isAuthenticated && context.mounted) {
           context.go(AppRoutes.timeline);
         }
       });
@@ -27,7 +27,8 @@ class LoginScreen extends ConsumerWidget {
           value: authState,
           loadingLabel: 'Checking login state...',
           onRetry: () => ref.invalidate(authControllerProvider),
-          data: (user) {
+          data: (auth) {
+            final user = auth.user;
             return Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),
@@ -50,10 +51,28 @@ class LoginScreen extends ConsumerWidget {
                       Card(
                         child: Padding(
                           padding: const EdgeInsets.all(20),
-                          child: Text(
-                            user == null
-                                ? 'Logged out'
-                                : 'Logged in: @${user.username}',
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                user == null
+                                    ? 'Logged out'
+                                    : 'Logged in: @${user.username}',
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Mode: ${auth.loginModeLabel}',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                              if (auth.session != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Session user: ${auth.session!.displayName}',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                       ),
