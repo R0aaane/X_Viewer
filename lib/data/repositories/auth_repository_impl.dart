@@ -9,7 +9,7 @@ class AuthRepositoryImpl implements AuthRepository {
   AuthRepositoryImpl(
     this._persistenceService,
     this._xOAuthService, {
-    this.mode = LoginMode.dummy,
+    this.mode = LoginMode.xOAuth,
   });
 
   final AuthPersistenceService _persistenceService;
@@ -40,34 +40,18 @@ class AuthRepositoryImpl implements AuthRepository {
 
   @override
   Future<AppUser> signIn() async {
-    if (mode == LoginMode.xOAuth) {
-      final service = _xOAuthService;
-      if (service == null) {
-        throw StateError('X OAuth service was not configured.');
-      }
-
-      final session = await service.signIn();
-      await _persistenceService.saveSession(session);
-      return AppUser(
-        id: session.userId,
-        name: session.displayName,
-        username: session.username,
-      );
+    final service = _xOAuthService;
+    if (service == null) {
+      throw StateError('X OAuth service was not configured.');
     }
 
-    const user = AppUser(
-      id: 'me',
-      name: 'Demo User',
-      username: 'demo_user',
-    );
-    const session = AuthSession(
-      userId: 'me',
-      username: 'demo_user',
-      displayName: 'Demo User',
-      loginMode: LoginMode.dummy,
-    );
+    final session = await service.signIn();
     await _persistenceService.saveSession(session);
-    return user;
+    return AppUser(
+      id: session.userId,
+      name: session.displayName,
+      username: session.username,
+    );
   }
 
   @override

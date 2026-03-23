@@ -13,14 +13,8 @@ class AuthState {
   final AuthSession? session;
   final LoginMode availableLoginMode;
 
-  bool get isAuthenticated => user != null && session != null;
+  bool get isAuthenticated =>
+      user != null && session != null && session!.hasAccessToken;
 
-  String get loginModeLabel {
-    switch (availableLoginMode) {
-      case LoginMode.dummy:
-        return 'Dummy login';
-      case LoginMode.xOAuth:
-        return 'X OAuth';
-    }
-  }
+  String get loginModeLabel => 'X OAuth 2.0 PKCE';
 }

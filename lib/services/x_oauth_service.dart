@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 
 import '../core/constants/x_auth_constants.dart';
 import '../core/errors/app_exception.dart';
@@ -43,15 +44,20 @@ class XOAuthService {
       _config.redirectUri,
       timeout: XAuthConstants.callbackTimeout,
     );
+    final authorizeUri = _buildAuthorizationUri(
+      state: state,
+      codeChallenge: codeChallenge,
+    );
+    debugPrint(
+      '[xviewer][flutter] Starting OAuth authorization. authorizeUrl=$authorizeUri',
+    );
 
     await _linkLauncherService.openExternal(
-      _buildAuthorizationUri(
-        state: state,
-        codeChallenge: codeChallenge,
-      ).toString(),
+      authorizeUri.toString(),
     );
 
     final callbackUri = await callbackFuture;
+    debugPrint('[xviewer][flutter] OAuth callback received: $callbackUri');
     final error = callbackUri.queryParameters['error'];
     if ((error ?? '').isNotEmpty) {
       throw AppException(
@@ -61,6 +67,10 @@ class XOAuthService {
     }
 
     final returnedState = callbackUri.queryParameters['state'] ?? '';
+    final code = callbackUri.queryParameters['code'] ?? '';
+    debugPrint(
+      '[xviewer][flutter] OAuth callback parsed: scheme=${callbackUri.scheme}, host=${callbackUri.host}, path=${callbackUri.path}, code=$code, state=$returnedState, error=$error',
+    );
     if (returnedState != state) {
       throw AppException(
         'X OAuth state verification failed.',
@@ -68,7 +78,6 @@ class XOAuthService {
       );
     }
 
-    final code = callbackUri.queryParameters['code'] ?? '';
     if (code.isEmpty) {
       throw AppException(
         'X OAuth callback did not contain an authorization code.',
@@ -76,6 +85,9 @@ class XOAuthService {
       );
     }
 
+    debugPrint(
+      '[xviewer][flutter] Starting token exchange. redirectUri=${_config.redirectUri} stateVerified=${returnedState == state}',
+    );
     final token = await _authClient.exchangeCodeForToken(
       clientId: _config.clientId,
       code: code,

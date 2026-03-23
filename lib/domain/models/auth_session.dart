@@ -21,6 +21,31 @@ class AuthSession {
 
   bool get hasAccessToken => (accessToken ?? '').isNotEmpty;
 
+  AuthSession copyWith({
+    String? userId,
+    String? username,
+    String? displayName,
+    LoginMode? loginMode,
+    String? accessToken,
+    bool clearAccessToken = false,
+    String? refreshToken,
+    bool clearRefreshToken = false,
+    DateTime? expiresAt,
+    bool clearExpiresAt = false,
+  }) {
+    return AuthSession(
+      userId: userId ?? this.userId,
+      username: username ?? this.username,
+      displayName: displayName ?? this.displayName,
+      loginMode: loginMode ?? this.loginMode,
+      accessToken: clearAccessToken ? null : (accessToken ?? this.accessToken),
+      refreshToken: clearRefreshToken
+          ? null
+          : (refreshToken ?? this.refreshToken),
+      expiresAt: clearExpiresAt ? null : (expiresAt ?? this.expiresAt),
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'userId': userId,
@@ -40,7 +65,7 @@ class AuthSession {
       displayName: json['displayName'] as String? ?? '',
       loginMode: LoginMode.values.firstWhere(
         (mode) => mode.name == json['loginMode'],
-        orElse: () => LoginMode.dummy,
+        orElse: () => LoginMode.xOAuth,
       ),
       accessToken: json['accessToken'] as String?,
       refreshToken: json['refreshToken'] as String?,

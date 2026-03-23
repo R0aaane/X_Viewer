@@ -2,7 +2,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../../core/constants/app_routes.dart';
+import '../../../../domain/models/save_location_type.dart';
 import '../../../../core/utils/date_formatter.dart';
 import '../../../../services/service_providers.dart';
 import '../../../../widgets/async_value_view.dart';
@@ -19,6 +22,30 @@ class SavedMediaScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Saved Images'),
+        leading: IconButton(
+          onPressed: () => context.go(AppRoutes.timeline),
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back to timeline',
+        ),
+        actions: [
+          IconButton(
+            onPressed: () async {
+              try {
+                await ref
+                    .read(savedMediaControllerProvider.notifier)
+                    .openGalleryApp();
+              } catch (error) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(error.toString())));
+                }
+              }
+            },
+            icon: const Icon(Icons.photo_library_outlined),
+            tooltip: 'Open gallery app',
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -54,7 +81,7 @@ class SavedMediaScreen extends ConsumerWidget {
                   padding: const EdgeInsets.all(16),
                   itemBuilder: (context, index) {
                     final record = records[index];
-                    final file = File(record.localSavedPath);
+                    final previewFile = File(record.previewFilePath);
 
                     return Card(
                       child: Padding(
@@ -67,8 +94,8 @@ class SavedMediaScreen extends ConsumerWidget {
                               child: SizedBox(
                                 width: 96,
                                 height: 96,
-                                child: file.existsSync()
-                                    ? Image.file(file, fit: BoxFit.cover)
+                                child: previewFile.existsSync()
+                                    ? Image.file(previewFile, fit: BoxFit.cover)
                                     : const ColoredBox(
                                         color: Color(0xFFE5E7EB),
                                         child: Icon(
@@ -84,21 +111,37 @@ class SavedMediaScreen extends ConsumerWidget {
                                 children: [
                                   Text(
                                     record.authorName,
-                                    style: Theme.of(context).textTheme.titleMedium,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
                                   ),
                                   const SizedBox(height: 2),
                                   Text('@${record.authorUsername}'),
                                   const SizedBox(height: 8),
                                   Text(
                                     'Saved at: ${DateFormatter.shortDateTime(record.savedAt)}',
-                                    style: Theme.of(context).textTheme.bodySmall,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    record.saveLocationType ==
+                                            SaveLocationType.gallery
+                                        ? 'Location: Gallery'
+                                        : 'Location: App storage',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
                                     record.localSavedPath,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context).textTheme.bodySmall,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
                                   ),
                                   const SizedBox(height: 8),
                                   Wrap(
@@ -109,37 +152,88 @@ class SavedMediaScreen extends ConsumerWidget {
                                         onPressed: () async {
                                           try {
                                             await ref
-                                                .read(linkLauncherServiceProvider)
-                                                .openExternal(record.originalPostUrl);
+                                                .read(
+                                                  linkLauncherServiceProvider,
+                                                )
+                                                .openExternal(
+                                                  record.originalPostUrl,
+                                                );
                                           } catch (error) {
                                             if (context.mounted) {
-                                              ScaffoldMessenger.of(context)
-                                                  .showSnackBar(
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
                                                 SnackBar(
-                                                  content: Text(error.toString()),
+                                                  content: Text(
+                                                    error.toString(),
+                                                  ),
                                                 ),
                                               );
                                             }
                                           }
                                         },
-                                        icon: const Icon(Icons.open_in_new_rounded),
+                                        icon: const Icon(
+                                          Icons.open_in_new_rounded,
+                                        ),
                                         label: const Text('Open post'),
                                       ),
+                                      if (record.saveLocationType ==
+                                              SaveLocationType.gallery &&
+                                          (record
+                                                  .galleryContentUri
+                                                  ?.isNotEmpty ??
+                                              false))
+                                        FilledButton.tonalIcon(
+                                          onPressed: () async {
+                                            try {
+                                              await ref
+                                                  .read(
+                                                    savedMediaControllerProvider
+                                                        .notifier,
+                                                  )
+                                                  .openGalleryApp();
+                                            } catch (error) {
+                                              if (context.mounted) {
+                                                ScaffoldMessenger.of(
+                                                  context,
+                                                ).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      error.toString(),
+                                                    ),
+                                                  ),
+                                                );
+                                              }
+                                            }
+                                          },
+                                          icon: const Icon(
+                                            Icons.photo_library_outlined,
+                                          ),
+                                          label: const Text('Gallery'),
+                                        ),
                                       FilledButton.tonalIcon(
                                         onPressed: () async {
                                           await ref
-                                              .read(savedMediaControllerProvider.notifier)
+                                              .read(
+                                                savedMediaControllerProvider
+                                                    .notifier,
+                                              )
                                               .deleteRecord(record);
                                           if (context.mounted) {
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
                                               const SnackBar(
-                                                content: Text('Saved record removed'),
+                                                content: Text(
+                                                  'Saved record removed',
+                                                ),
                                               ),
                                             );
                                           }
                                         },
-                                        icon: const Icon(Icons.delete_outline_rounded),
+                                        icon: const Icon(
+                                          Icons.delete_outline_rounded,
+                                        ),
                                         label: const Text('Delete'),
                                       ),
                                     ],
@@ -152,7 +246,8 @@ class SavedMediaScreen extends ConsumerWidget {
                       ),
                     );
                   },
-                  separatorBuilder: (context, index) => const SizedBox(height: 12),
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(height: 12),
                   itemCount: records.length,
                 );
               },

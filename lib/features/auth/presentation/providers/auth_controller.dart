@@ -3,18 +3,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/config/app_environment.dart';
 import '../../../../core/constants/x_api_constants.dart';
+import '../../../../core/errors/app_exception.dart';
 import '../../../../data/datasources/x_auth_client.dart';
 import '../../../../data/repositories/auth_repository_impl.dart';
+import '../../../../domain/models/app_user.dart';
+import '../../../../domain/models/auth_session.dart';
 import '../../../../domain/models/auth_state.dart';
 import '../../../../domain/repositories/auth_repository.dart';
 import '../../../../services/auth_persistence_service.dart';
+import '../../../../services/secure_token_storage_service.dart';
 import '../../../../services/service_providers.dart';
 import '../../../../services/x_auth_callback_service.dart';
 import '../../../../services/x_auth_config_service.dart';
 import '../../../../services/x_oauth_service.dart';
 
+final secureTokenStorageServiceProvider = Provider<SecureTokenStorageService>(
+  (ref) => const SecureTokenStorageService(),
+);
+
 final authPersistenceServiceProvider = Provider<AuthPersistenceService>(
-  (ref) => AuthPersistenceService(),
+  (ref) => AuthPersistenceService(ref.watch(secureTokenStorageServiceProvider)),
 );
 
 final appEnvironmentProvider = Provider<AppEnvironment>(
@@ -68,11 +76,10 @@ class AuthController extends AsyncNotifier<AuthState> {
   @override
   Future<AuthState> build() async {
     final repository = ref.read(authRepositoryProvider);
-    final user = await repository.getCurrentUser();
     final session = await repository.getCurrentSession();
 
     return AuthState(
-      user: user,
+      user: _userFromSession(session),
       session: session,
       availableLoginMode: repository.loginMode,
     );
@@ -83,13 +90,31 @@ class AuthController extends AsyncNotifier<AuthState> {
     state = await AsyncValue.guard(() async {
       final repository = ref.read(authRepositoryProvider);
       final user = await repository.signIn();
-      final session = await repository.getCurrentSession();
+      final refreshedSession = await repository.getCurrentSession();
+      if (refreshedSession == null || !refreshedSession.hasAccessToken) {
+        throw const AppException(
+          'X login did not produce a persisted access token.',
+        );
+      }
+
       return AuthState(
         user: user,
-        session: session,
+        session: refreshedSession,
         availableLoginMode: repository.loginMode,
       );
     });
+  }
+
+  AppUser? _userFromSession(AuthSession? session) {
+    if (session == null) {
+      return null;
+    }
+
+    return AppUser(
+      id: session.userId,
+      name: session.displayName,
+      username: session.username,
+    );
   }
 
   Future<void> signOut() async {

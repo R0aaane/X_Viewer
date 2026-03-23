@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../core/errors/app_exception.dart';
@@ -18,17 +19,30 @@ class XAuthCallbackService {
     String redirectUri, {
     Duration timeout = const Duration(minutes: 3),
   }) async {
+    debugPrint(
+      '[xviewer][flutter] Waiting for OAuth callback. redirectUri=$redirectUri',
+    );
     final pendingUrl = await _consumePendingCallbackUrl();
     final pendingUri = _tryParseMatchingUri(pendingUrl, redirectUri);
     if (pendingUri != null) {
+      debugPrint(
+        '[xviewer][flutter] Using pending OAuth callback URL: $pendingUri',
+      );
       return pendingUri;
     }
 
     try {
+      debugPrint(
+        '[xviewer][flutter] Subscribing to EventChannel for OAuth callback events.',
+      );
       return _eventChannel
           .receiveBroadcastStream()
           .where((event) => event is String)
           .cast<String>()
+          .map((url) {
+            debugPrint('[xviewer][flutter] EventChannel received URL: $url');
+            return url;
+          })
           .map((url) => _tryParseMatchingUri(url, redirectUri))
           .where((uri) => uri != null)
           .cast<Uri>()
@@ -49,9 +63,11 @@ class XAuthCallbackService {
 
   Future<String?> _consumePendingCallbackUrl() async {
     try {
-      return await _methodChannel.invokeMethod<String>(
+      final url = await _methodChannel.invokeMethod<String>(
         'consumePendingCallbackUrl',
       );
+      debugPrint('[xviewer][flutter] MethodChannel pending URL: $url');
+      return url;
     } on MissingPluginException {
       return null;
     }
@@ -65,16 +81,26 @@ class XAuthCallbackService {
     final actual = Uri.tryParse(rawUrl!);
     final expected = Uri.tryParse(redirectUri);
     if (actual == null || expected == null) {
+      debugPrint(
+        '[xviewer][flutter] Failed to parse callback URL. raw=$rawUrl redirectUri=$redirectUri',
+      );
       return null;
     }
 
     final sameAuthority =
         actual.scheme == expected.scheme && actual.host == expected.host;
     final samePath = actual.path == expected.path;
+    debugPrint(
+      '[xviewer][flutter] Callback parse details: scheme=${actual.scheme}, host=${actual.host}, path=${actual.path}, code=${actual.queryParameters['code']}, state=${actual.queryParameters['state']}, error=${actual.queryParameters['error']}',
+    );
     if (!sameAuthority || !samePath) {
+      debugPrint(
+        '[xviewer][flutter] Ignored non-matching callback URL: $actual',
+      );
       return null;
     }
 
+    debugPrint('[xviewer][flutter] Accepted callback URL: $actual');
     return actual;
   }
 }

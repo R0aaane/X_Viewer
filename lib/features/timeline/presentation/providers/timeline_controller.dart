@@ -4,22 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/x_api_constants.dart';
 import '../../../../data/adapters/x_timeline_adapter.dart';
-import '../../../../data/datasources/dummy_x_api_client.dart';
 import '../../../../data/datasources/x_api_client.dart';
 import '../../../../data/mappers/x_timeline_includes_mapper.dart';
 import '../../../../data/repositories/timeline_repository_impl.dart';
 import '../../../../domain/models/media_post.dart';
 import '../../../../domain/models/timeline_page.dart';
 import '../../../../domain/repositories/timeline_repository.dart';
-import '../../../../services/auth_persistence_service.dart';
 import '../../../../services/timeline_media_extractor.dart';
 import '../../../../services/x_timeline_request_builder.dart';
 import '../../../auth/presentation/providers/auth_controller.dart';
 import '../models/timeline_state.dart';
-
-final dummyXApiClientProvider = Provider<DummyXApiClient>(
-  (ref) => DummyXApiClient(),
-);
 
 final xApiDioProvider = Provider<Dio>(
   (ref) {
@@ -65,19 +59,12 @@ final timelineMediaExtractorProvider = Provider<TimelineMediaExtractor>(
   (ref) => TimelineMediaExtractor(),
 );
 
-final timelineAuthPersistenceServiceProvider = Provider<AuthPersistenceService>(
-  (ref) => AuthPersistenceService(),
-);
-
 final timelineRepositoryProvider = Provider<TimelineRepository>((ref) {
-  final environment = ref.watch(appEnvironmentProvider);
   return TimelineRepositoryImpl(
-    ref.watch(dummyXApiClientProvider),
     ref.watch(xApiClientProvider),
     ref.watch(xTimelineAdapterProvider),
     ref.watch(timelineMediaExtractorProvider),
-    ref.watch(timelineAuthPersistenceServiceProvider),
-    environment,
+    ref.watch(authPersistenceServiceProvider),
   );
 });
 

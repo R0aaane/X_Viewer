@@ -2,16 +2,43 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/errors/app_exception.dart';
 import '../core/constants/storage_keys.dart';
 import '../domain/models/auth_session.dart';
-import '../domain/models/login_mode.dart';
+import '../domain/models/oauth_token_bundle.dart';
+import 'secure_token_storage_service.dart';
 
 class AuthPersistenceService {
+  AuthPersistenceService(this._secureTokenStorageService);
+
+  final SecureTokenStorageService _secureTokenStorageService;
+
   Future<void> saveSession(AuthSession session) async {
+    if (!session.hasAccessToken) {
+      throw const AppException(
+        'Cannot persist an auth session without an access token.',
+      );
+    }
+
     final prefs = await SharedPreferences.getInstance();
+    await _secureTokenStorageService.saveTokens(
+      OAuthTokenBundle(
+        accessToken: session.accessToken!,
+        refreshToken: session.refreshToken,
+        expiresAt: session.expiresAt,
+      ),
+    );
     await prefs.setString(
       StorageKeys.authSession,
-      jsonEncode(session.toJson()),
+      jsonEncode(
+        session
+            .copyWith(
+              clearAccessToken: true,
+              clearRefreshToken: true,
+              clearExpiresAt: true,
+            )
+            .toJson(),
+      ),
     );
   }
 
@@ -19,24 +46,35 @@ class AuthPersistenceService {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(StorageKeys.authSession);
     if (raw == null || raw.isEmpty) {
+      await _secureTokenStorageService.clearTokens();
       return null;
     }
 
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) {
-        await prefs.remove(StorageKeys.authSession);
+        await clearSession();
         return null;
       }
-      return AuthSession.fromJson(decoded);
-    } on FormatException {
-      final legacySession = _tryParseLegacySession(raw);
-      if (legacySession != null) {
-        await saveSession(legacySession);
-        return legacySession;
+
+      final session = AuthSession.fromJson(decoded);
+      final tokens = await _secureTokenStorageService.readTokens();
+      if (session.userId.isEmpty ||
+          session.username.isEmpty ||
+          session.displayName.isEmpty ||
+          tokens == null ||
+          !tokens.hasAccessToken) {
+        await clearSession();
+        return null;
       }
 
-      await prefs.remove(StorageKeys.authSession);
+      return session.copyWith(
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+      );
+    } on FormatException {
+      await clearSession();
       return null;
     }
   }
@@ -44,19 +82,6 @@ class AuthPersistenceService {
   Future<void> clearSession() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(StorageKeys.authSession);
-  }
-
-  AuthSession? _tryParseLegacySession(String raw) {
-    final username = raw.trim();
-    if (username.isEmpty) {
-      return null;
-    }
-
-    return AuthSession(
-      userId: 'me',
-      username: username,
-      displayName: username,
-      loginMode: LoginMode.dummy,
-    );
+    await _secureTokenStorageService.clearTokens();
   }
 }

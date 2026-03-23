@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_routes.dart';
 import '../../../../domain/models/media_post.dart';
 import '../../../../domain/models/post_image.dart';
+import '../../../../domain/models/save_failure_reason.dart';
 import '../../../../services/service_providers.dart';
 import '../../../../widgets/async_value_view.dart';
 import '../../../../widgets/post_media_card.dart';
@@ -54,9 +55,8 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   Widget build(BuildContext context) {
     final timelineState = ref.watch(timelineControllerProvider);
     final savedState = ref.watch(savedMediaControllerProvider);
-    final savedMediaKeys = savedState.valueOrNull
-            ?.map((record) => record.mediaKey)
-            .toSet() ??
+    final savedMediaKeys =
+        savedState.valueOrNull?.map((record) => record.mediaKey).toSet() ??
         <String>{};
 
     return Scaffold(
@@ -95,7 +95,8 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
 
           final items = _flattenPosts(posts);
           return RefreshIndicator(
-            onRefresh: () => ref.read(timelineControllerProvider.notifier).reload(),
+            onRefresh: () =>
+                ref.read(timelineControllerProvider.notifier).reload(),
             child: CustomScrollView(
               controller: _scrollController,
               physics: const AlwaysScrollableScrollPhysics(),
@@ -105,59 +106,68 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
                   sliver: SliverGrid(
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      childAspectRatio: 0.62,
-                    ),
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final entry = items[index];
-                        return PostMediaCard(
-                          post: entry.post,
-                          image: entry.image,
-                          isSaved: savedMediaKeys.contains(entry.image.mediaKey),
-                          onSave: () async {
-                            try {
-                              final existing = await ref
-                                  .read(savedMediaControllerProvider.notifier)
-                                  .saveImage(post: entry.post, image: entry.image);
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      existing == null
-                                          ? 'Image saved'
-                                          : 'This image is already saved',
-                                    ),
-                                  ),
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 0.62,
+                        ),
+                    delegate: SliverChildBuilderDelegate((context, index) {
+                      final entry = items[index];
+                      return PostMediaCard(
+                        post: entry.post,
+                        image: entry.image,
+                        isSaved: savedMediaKeys.contains(entry.image.mediaKey),
+                        onSave: () async {
+                          try {
+                            final result = await ref
+                                .read(savedMediaControllerProvider.notifier)
+                                .saveImage(
+                                  post: entry.post,
+                                  image: entry.image,
                                 );
-                              }
-                            } catch (error) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Save failed: $error')),
-                                );
-                              }
+                            if (context.mounted) {
+                              final message = switch (result.failureReason) {
+                                SaveFailureReason.duplicate =>
+                                  'This image is already saved',
+                                SaveFailureReason.permissionDenied =>
+                                  'Gallery permission was denied, so the image was kept in app storage',
+                                SaveFailureReason.galleryUnavailable =>
+                                  'Saved in app storage because gallery save was unavailable',
+                                SaveFailureReason.unsupportedPlatform =>
+                                  'Saved in app storage on this platform',
+                                SaveFailureReason.writeFailed =>
+                                  'Gallery save failed, so the image was kept in app storage',
+                                _ =>
+                                  result.message ??
+                                      'Saved to ${result.locationType.name}',
+                              };
+                              ScaffoldMessenger.of(
+                                context,
+                              ).showSnackBar(SnackBar(content: Text(message)));
                             }
-                          },
-                          onOpenPost: () async {
-                            try {
-                              await ref
-                                  .read(linkLauncherServiceProvider)
-                                  .openExternal(entry.post.originalPostUrl);
-                            } catch (error) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(error.toString())),
-                                );
-                              }
+                          } catch (error) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Save failed: $error')),
+                              );
                             }
-                          },
-                        );
-                      },
-                      childCount: items.length,
-                    ),
+                          }
+                        },
+                        onOpenPost: () async {
+                          try {
+                            await ref
+                                .read(linkLauncherServiceProvider)
+                                .openExternal(entry.post.originalPostUrl);
+                          } catch (error) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(error.toString())),
+                              );
+                            }
+                          }
+                        },
+                      );
+                    }, childCount: items.length),
                   ),
                 ),
                 SliverToBoxAdapter(
@@ -166,7 +176,9 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
                     hasMore: timeline.hasMore,
                     errorMessage: timeline.errorMessage,
                     onRetry: () {
-                      ref.read(timelineControllerProvider.notifier).loadNextPage();
+                      ref
+                          .read(timelineControllerProvider.notifier)
+                          .loadNextPage();
                     },
                   ),
                 ),
@@ -180,10 +192,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
 }
 
 class TimelineEntry {
-  const TimelineEntry({
-    required this.post,
-    required this.image,
-  });
+  const TimelineEntry({required this.post, required this.image});
 
   final MediaPost post;
   final PostImage image;
@@ -192,9 +201,8 @@ class TimelineEntry {
 List<TimelineEntry> _flattenPosts(List<MediaPost> posts) {
   return posts
       .expand(
-        (post) => post.images.map(
-          (image) => TimelineEntry(post: post, image: image),
-        ),
+        (post) =>
+            post.images.map((image) => TimelineEntry(post: post, image: image)),
       )
       .toList(growable: false);
 }
@@ -235,10 +243,7 @@ class _TimelineFooter extends StatelessWidget {
         child: Center(
           child: Column(
             children: [
-              Text(
-                errorMessage!,
-                textAlign: TextAlign.center,
-              ),
+              Text(errorMessage!, textAlign: TextAlign.center),
               const SizedBox(height: 12),
               FilledButton(
                 onPressed: onRetry,
@@ -253,9 +258,7 @@ class _TimelineFooter extends StatelessWidget {
     if (!hasMore) {
       return const Padding(
         padding: EdgeInsets.fromLTRB(16, 8, 16, 24),
-        child: Center(
-          child: Text('No more posts'),
-        ),
+        child: Center(child: Text('No more posts')),
       );
     }
 

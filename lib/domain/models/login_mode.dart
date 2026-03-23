@@ -1,4 +1,3 @@
 enum LoginMode {
-  dummy,
   xOAuth,
 }

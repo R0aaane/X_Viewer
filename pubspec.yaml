@@ -43,12 +43,18 @@ dependencies:
   intl: ^0.20.2
   collection: ^1.19.1
   shared_preferences: ^2.5.3
+  flutter_secure_storage: ^9.2.4
   path: ^1.9.1
+  permission_handler: ^11.4.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+dependency_overrides:
+  permission_handler_windows:
+    path: third_party/permission_handler_windows_stub
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

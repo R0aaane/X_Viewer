@@ -1,4 +1,3 @@
-import '../../core/config/app_environment.dart';
 import '../../core/errors/x_api_exception.dart';
 import '../../domain/models/auth_session.dart';
 import '../../domain/models/media_post.dart';
@@ -7,39 +6,23 @@ import '../../domain/repositories/timeline_repository.dart';
 import '../../services/auth_persistence_service.dart';
 import '../../services/timeline_media_extractor.dart';
 import '../adapters/x_timeline_adapter.dart';
-import '../datasources/dummy_x_api_client.dart';
 import '../datasources/x_api_client.dart';
 
 class TimelineRepositoryImpl implements TimelineRepository {
   TimelineRepositoryImpl(
-    this._dummyApiClient,
     this._xApiClient,
     this._adapter,
     this._extractor,
     this._authPersistenceService,
-    this._environment,
   );
 
-  final DummyXApiClient _dummyApiClient;
   final XApiClient _xApiClient;
   final XTimelineAdapter _adapter;
   final TimelineMediaExtractor _extractor;
   final AuthPersistenceService _authPersistenceService;
-  final AppEnvironment _environment;
 
   @override
   Future<TimelinePage> fetchTimelinePage({String? cursor}) async {
-    if (!_environment.enableRealXApi) {
-      final response = await _dummyApiClient.fetchHomeTimeline(cursor: cursor);
-      final posts = response.map(_adapter.fromMap).toList(growable: false);
-      return TimelinePage(
-        posts: _extractor.onlyImagePosts(posts),
-        nextCursor: null,
-        previousCursor: null,
-        resultCount: posts.length,
-      );
-    }
-
     final session = await _authPersistenceService.getSession();
     _validateSession(session);
 

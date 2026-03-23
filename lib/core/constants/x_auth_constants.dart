@@ -3,6 +3,10 @@ abstract final class XAuthConstants {
   static const authorizationPath = '/i/oauth2/authorize';
   static const tokenEndpoint = 'https://api.x.com/2/oauth2/token';
   static const currentUserEndpoint = 'https://api.x.com/2/users/me';
+  static const defaultClientId = String.fromEnvironment(
+    'X_CLIENT_ID',
+    defaultValue: 'TODO_SET_X_CLIENT_ID',
+  );
   static const callbackScheme = 'xviewer';
   static const callbackHost = 'auth';
   static const callbackPath = '/callback';

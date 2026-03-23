@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../core/constants/x_auth_constants.dart';
 import '../../core/errors/app_exception.dart';
@@ -30,6 +31,9 @@ class XAuthClient {
           responseType: ResponseType.json,
         ),
       );
+      debugPrint(
+        '[xviewer][flutter] Token exchange response: status=${response.statusCode} body=${response.data}',
+      );
 
       final body = response.data;
       if (body == null) {
@@ -50,6 +54,9 @@ class XAuthClient {
         expiresIn: (body['expires_in'] as num?)?.toInt(),
       );
     } on DioException catch (error) {
+      debugPrint(
+        '[xviewer][flutter] Token exchange failed: status=${error.response?.statusCode} body=${error.response?.data}',
+      );
       throw AppException(
         'Failed to exchange the X authorization code for a token.',
         details: error.response?.data ?? error.message,
