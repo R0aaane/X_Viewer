@@ -7,9 +7,12 @@ import '../../../../core/errors/error_message_formatter.dart';
 import '../../../../data/adapters/x_timeline_adapter.dart';
 import '../../../../data/datasources/x_api_client.dart';
 import '../../../../data/mappers/x_timeline_includes_mapper.dart';
+import '../../../../data/repositories/reposted_image_repository_impl.dart';
 import '../../../../data/repositories/timeline_repository_impl.dart';
 import '../../../../domain/models/auth_session.dart';
+import '../../../../domain/models/feed_mode.dart';
 import '../../../../domain/models/timeline_page.dart';
+import '../../../../domain/repositories/reposted_image_repository.dart';
 import '../../../../domain/repositories/timeline_repository.dart';
 import '../../../../services/timeline_cache_service.dart';
 import '../../../../services/timeline_media_extractor.dart';
@@ -74,6 +77,17 @@ final timelineRepositoryProvider = Provider<TimelineRepository>((ref) {
   );
 });
 
+final repostedImageRepositoryProvider = Provider<RepostedImageRepository>((
+  ref,
+) {
+  return RepostedImageRepositoryImpl(
+    ref.watch(xApiClientProvider),
+    ref.watch(xTimelineAdapterProvider),
+    ref.watch(timelineMediaExtractorProvider),
+    ref.watch(authPersistenceServiceProvider),
+  );
+});
+
 final timelineControllerProvider =
     AsyncNotifierProvider<TimelineController, TimelineState>(
       TimelineController.new,
@@ -87,73 +101,93 @@ class TimelineController extends AsyncNotifier<TimelineState> {
       return TimelineState.empty;
     }
 
-    final cached = await ref
-        .read(timelineCacheServiceProvider)
-        .read(session.userId);
-    if (cached != null && cached.items.isNotEmpty) {
-      final hydrated = cached.copyWith(
-        isRefreshing: false,
-        isLoadingMore: false,
-        clearErrorMessage: true,
-      );
-
-      if (ref
-          .read(timelineRepositoryProvider)
-          .shouldSync(lastSyncedAt: hydrated.lastSyncedAt)) {
-        Future.microtask(syncIfStale);
-      } else {
-        debugPrint(
-          '[xviewer][flutter] Timeline sync skipped: reason=skipped_cache_fresh lastSyncedAt=${hydrated.lastSyncedAt}',
-        );
+    final cached = await ref.read(timelineCacheServiceProvider).read(
+      session.userId,
+    );
+    if (cached != null) {
+      if (cached.reposted.hasFetched) {
+        return cached.copyWith(selectedMode: FeedMode.reposted);
       }
-      return hydrated;
+
+      final initialPage = await ref
+          .read(repostedImageRepositoryProvider)
+          .fetchInitial();
+      final hydratedState = cached.copyWith(
+        selectedMode: FeedMode.reposted,
+        reposted: _toFeedState(initialPage),
+      );
+      await _persistState(hydratedState);
+      return hydratedState;
     }
 
-    final initialPage = await ref.read(timelineRepositoryProvider).fetchInitial();
-    final initialState = _toState(initialPage);
+    final initialPage = await ref
+        .read(repostedImageRepositoryProvider)
+        .fetchInitial();
+    final initialState = TimelineState(
+      selectedMode: FeedMode.reposted,
+      reposted: _toFeedState(initialPage),
+      timeline: FeedPageState.empty,
+    );
     await _persistState(initialState);
     return initialState;
   }
 
-  Future<void> syncIfStale() async {
+  void selectMode(FeedMode mode) {
     final current = state.valueOrNull;
-    final repository = ref.read(timelineRepositoryProvider);
-    if (current == null || current.isRefreshing) {
-      return;
-    }
-    if (!repository.shouldSync(lastSyncedAt: current.lastSyncedAt)) {
-      debugPrint(
-        '[xviewer][flutter] Timeline sync skipped: reason=skipped_cache_fresh lastSyncedAt=${current.lastSyncedAt}',
-      );
+    if (current == null || current.selectedMode == mode) {
       return;
     }
 
-    await _refreshInternal(manual: false);
+    state = AsyncData(current.copyWith(selectedMode: mode));
   }
 
-  Future<void> reload() async {
-    await _refreshInternal(manual: true);
+  Future<void> refreshSelected() async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    await refreshMode(current.selectedMode);
+  }
+
+  Future<void> refreshMode(FeedMode mode) async {
+    switch (mode) {
+      case FeedMode.reposted:
+        await _refreshRepostedFeed();
+        return;
+      case FeedMode.timeline:
+        await _refreshTimelineFeed();
+        return;
+      case FeedMode.liked:
+        return;
+    }
   }
 
   Future<void> loadNextPage() async {
     final current = state.valueOrNull;
-    final nextToken = current?.nextToken;
-    if (current == null ||
-        current.isLoadingMore ||
-        nextToken == null ||
-        nextToken.isEmpty ||
-        !current.hasMore) {
+    if (current == null) {
       return;
     }
-    if (current.lastUsedPaginationToken == nextToken) {
+
+    final mode = current.selectedMode;
+    final feed = current.feedStateFor(mode);
+    final nextToken = feed.nextToken;
+    if (feed.isLoadingMore ||
+        nextToken == null ||
+        nextToken.isEmpty ||
+        !feed.hasMore) {
+      return;
+    }
+    if (feed.lastUsedPaginationToken == nextToken) {
       debugPrint(
-        '[xviewer][flutter] Timeline loadMore skipped: duplicate pagination token token=$nextToken',
+        '[xviewer][flutter] Feed loadMore skipped: mode=${mode.name} duplicate pagination token token=$nextToken',
       );
       return;
     }
 
-    state = AsyncData(
-      current.copyWith(
+    _updateFeed(
+      mode,
+      feed.copyWith(
         isLoadingMore: true,
         lastUsedPaginationToken: nextToken,
         clearErrorMessage: true,
@@ -161,27 +195,45 @@ class TimelineController extends AsyncNotifier<TimelineState> {
     );
 
     try {
-      final nextPage = await ref
-          .read(timelineRepositoryProvider)
-          .fetchNext(paginationToken: nextToken);
-      final mergedItems = ref
-          .read(timelineRepositoryProvider)
-          .mergeAndDedupePosts(current.items, nextPage.posts);
-      final nextState = current.copyWith(
+      final nextPage = switch (mode) {
+        FeedMode.reposted => await ref
+            .read(repostedImageRepositoryProvider)
+            .fetchNext(paginationToken: nextToken),
+        FeedMode.timeline => await ref
+            .read(timelineRepositoryProvider)
+            .fetchNext(paginationToken: nextToken),
+        FeedMode.liked => TimelinePage.empty,
+      };
+      if (mode == FeedMode.liked) {
+        return;
+      }
+
+      final mergedItems = switch (mode) {
+        FeedMode.reposted => ref
+            .read(repostedImageRepositoryProvider)
+            .mergeAndDedupePosts(feed.items, nextPage.posts),
+        FeedMode.timeline => ref
+            .read(timelineRepositoryProvider)
+            .mergeAndDedupePosts(feed.items, nextPage.posts),
+        FeedMode.liked => feed.items,
+      };
+      final nextFeed = feed.copyWith(
         items: mergedItems,
-        lastNewestId: current.lastNewestId ?? nextPage.newestId,
+        lastNewestId: feed.lastNewestId ?? nextPage.newestId,
         nextToken: nextPage.nextCursor,
         clearNextToken: (nextPage.nextCursor ?? '').isEmpty,
         hasMore: nextPage.hasNextPage,
         isLoadingMore: false,
         lastSyncedAt: DateTime.now(),
         clearErrorMessage: true,
+        hasFetched: true,
       );
-      state = AsyncData(nextState);
-      await _persistState(nextState);
+      _updateFeed(mode, nextFeed);
+      await _persistCurrentState();
     } catch (error) {
-      state = AsyncData(
-        current.copyWith(
+      _updateFeed(
+        mode,
+        feed.copyWith(
           isLoadingMore: false,
           errorMessage: formatErrorMessage(error),
         ),
@@ -189,14 +241,16 @@ class TimelineController extends AsyncNotifier<TimelineState> {
     }
   }
 
-  Future<void> _refreshInternal({required bool manual}) async {
+  Future<void> _refreshRepostedFeed() async {
     final current = state.valueOrNull ?? TimelineState.empty;
-    if (current.isRefreshing) {
+    final feed = current.reposted;
+    if (feed.isRefreshing) {
       return;
     }
 
-    state = AsyncData(
-      current.copyWith(
+    _updateFeed(
+      FeedMode.reposted,
+      feed.copyWith(
         isRefreshing: true,
         clearErrorMessage: true,
       ),
@@ -204,48 +258,105 @@ class TimelineController extends AsyncNotifier<TimelineState> {
 
     try {
       final TimelinePage page;
-      if (current.items.isEmpty) {
-        page = await ref.read(timelineRepositoryProvider).fetchInitial();
+      if (!feed.hasFetched || feed.items.isEmpty) {
+        page = await ref.read(repostedImageRepositoryProvider).fetchInitial();
       } else {
-        page = await ref
-            .read(timelineRepositoryProvider)
-            .fetchNewer(
-              sinceId: current.lastNewestId,
-              requestReason: manual ? 'manual_refresh' : 'stale_sync',
-            );
+        page = await ref.read(repostedImageRepositoryProvider).fetchNewer(
+          sinceId: feed.lastNewestId,
+          requestReason: 'manual_refresh',
+        );
       }
 
-      final mergedItems = current.items.isEmpty
+      final mergedItems = !feed.hasFetched || feed.items.isEmpty
           ? page.posts
           : ref
-                .read(timelineRepositoryProvider)
-                .mergeAndDedupePosts(page.posts, current.items);
-      final nextState = current.copyWith(
+                .read(repostedImageRepositoryProvider)
+                .mergeAndDedupePosts(page.posts, feed.items);
+      final nextFeed = feed.copyWith(
         items: mergedItems,
-        lastNewestId: page.newestId ?? current.lastNewestId,
-        nextToken: current.nextToken ?? page.nextCursor,
-        hasMore: (current.nextToken ?? page.nextCursor ?? '').isNotEmpty,
+        lastNewestId: page.newestId ?? feed.lastNewestId,
+        nextToken: page.nextCursor,
+        clearNextToken: (page.nextCursor ?? '').isEmpty,
+        hasMore: page.hasNextPage,
         isRefreshing: false,
         lastSyncedAt: DateTime.now(),
         clearErrorMessage: true,
+        hasFetched: true,
       );
-      state = AsyncData(nextState);
-      await _persistState(nextState);
-      debugPrint(
-        '[xviewer][flutter] Timeline sync completed: manual=$manual newItems=${page.posts.length} totalItems=${nextState.items.length}',
-      );
+      _updateFeed(FeedMode.reposted, nextFeed);
+      await _persistCurrentState();
     } catch (error) {
-      state = AsyncData(
-        current.copyWith(
+      _updateFeed(
+        FeedMode.reposted,
+        feed.copyWith(
           isRefreshing: false,
           errorMessage: formatErrorMessage(error),
+          hasFetched: feed.hasFetched,
         ),
       );
     }
   }
 
-  TimelineState _toState(TimelinePage page) {
-    return TimelineState(
+  Future<void> _refreshTimelineFeed() async {
+    final current = state.valueOrNull ?? TimelineState.empty;
+    final feed = current.timeline;
+    if (feed.isRefreshing) {
+      return;
+    }
+
+    // TODO(api-usage): keep timeline requests user-triggered only.
+    _updateFeed(
+      FeedMode.timeline,
+      feed.copyWith(
+        isRefreshing: true,
+        clearErrorMessage: true,
+      ),
+    );
+
+    try {
+      final TimelinePage page;
+      if (!feed.hasFetched || feed.items.isEmpty) {
+        page = await ref.read(timelineRepositoryProvider).fetchInitial();
+      } else {
+        page = await ref.read(timelineRepositoryProvider).fetchNewer(
+          sinceId: feed.lastNewestId,
+          requestReason: 'manual_refresh',
+        );
+      }
+
+      final mergedItems = !feed.hasFetched || feed.items.isEmpty
+          ? page.posts
+          : ref.read(timelineRepositoryProvider).mergeAndDedupePosts(
+                page.posts,
+                feed.items,
+              );
+      final nextFeed = feed.copyWith(
+        items: mergedItems,
+        lastNewestId: page.newestId ?? feed.lastNewestId,
+        nextToken: page.nextCursor,
+        clearNextToken: (page.nextCursor ?? '').isEmpty,
+        hasMore: page.hasNextPage,
+        isRefreshing: false,
+        lastSyncedAt: DateTime.now(),
+        clearErrorMessage: true,
+        hasFetched: true,
+      );
+      _updateFeed(FeedMode.timeline, nextFeed);
+      await _persistCurrentState();
+    } catch (error) {
+      _updateFeed(
+        FeedMode.timeline,
+        feed.copyWith(
+          isRefreshing: false,
+          errorMessage: formatErrorMessage(error),
+          hasFetched: feed.hasFetched,
+        ),
+      );
+    }
+  }
+
+  FeedPageState _toFeedState(TimelinePage page) {
+    return FeedPageState(
       items: page.posts,
       lastNewestId: page.newestId,
       nextToken: page.nextCursor,
@@ -255,20 +366,39 @@ class TimelineController extends AsyncNotifier<TimelineState> {
       lastSyncedAt: DateTime.now(),
       lastUsedPaginationToken: null,
       errorMessage: null,
+      hasFetched: true,
     );
+  }
+
+  void _updateFeed(FeedMode mode, FeedPageState nextFeed) {
+    final current = state.valueOrNull ?? TimelineState.empty;
+    final nextState = switch (mode) {
+      FeedMode.reposted => current.copyWith(reposted: nextFeed),
+      FeedMode.timeline => current.copyWith(timeline: nextFeed),
+      FeedMode.liked => current,
+    };
+    state = AsyncData(nextState);
   }
 
   Future<AuthSession?> _getSession() {
     return ref.read(authPersistenceServiceProvider).getSession();
   }
 
-  Future<void> _persistState(TimelineState state) async {
+  Future<void> _persistCurrentState() async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+    await _persistState(current);
+  }
+
+  Future<void> _persistState(TimelineState timelineState) async {
     final session = await _getSession();
     if (session == null || session.userId.isEmpty) {
       return;
     }
     await ref
         .read(timelineCacheServiceProvider)
-        .write(userId: session.userId, state: state);
+        .write(userId: session.userId, state: timelineState);
   }
 }

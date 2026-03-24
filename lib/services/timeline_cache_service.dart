@@ -18,8 +18,14 @@ class TimelineCacheService {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) {
-        await clear(userId);
-        return null;
+        if (decoded is! Map) {
+          await clear(userId);
+          return null;
+        }
+      }
+      if (decoded is! Map<String, dynamic>) {
+        final normalized = Map<String, dynamic>.from(decoded as Map);
+        return TimelineState.fromJson(normalized);
       }
       return TimelineState.fromJson(decoded);
     } on FormatException {

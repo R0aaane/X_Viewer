@@ -1,20 +1,17 @@
-import 'package:flutter/foundation.dart';
-
-import '../../core/constants/x_api_constants.dart';
-import '../../domain/models/feed_mode.dart';
 import '../../core/errors/x_api_exception.dart';
 import '../../domain/models/auth_session.dart';
+import '../../domain/models/feed_mode.dart';
 import '../../domain/models/media_post.dart';
 import '../../domain/models/timeline_page.dart';
-import '../../domain/repositories/timeline_repository.dart';
+import '../../domain/repositories/reposted_image_repository.dart';
 import '../../services/auth_persistence_service.dart';
 import '../../services/timeline_media_extractor.dart';
 import '../../services/x_timeline_request_builder.dart';
 import '../adapters/x_timeline_adapter.dart';
 import '../datasources/x_api_client.dart';
 
-class TimelineRepositoryImpl implements TimelineRepository {
-  TimelineRepositoryImpl(
+class RepostedImageRepositoryImpl implements RepostedImageRepository {
+  RepostedImageRepositoryImpl(
     this._xApiClient,
     this._adapter,
     this._extractor,
@@ -56,20 +53,6 @@ class TimelineRepositoryImpl implements TimelineRepository {
   }
 
   @override
-  bool shouldSync({DateTime? lastSyncedAt}) {
-    if (lastSyncedAt == null) {
-      return true;
-    }
-
-    final elapsed = DateTime.now().difference(lastSyncedAt);
-    final shouldSync = elapsed >= XApiConstants.timelineSyncCooldown;
-    debugPrint(
-      '[xviewer][flutter] Timeline sync decision: shouldSync=$shouldSync lastSyncedAt=$lastSyncedAt elapsedSeconds=${elapsed.inSeconds}',
-    );
-    return shouldSync;
-  }
-
-  @override
   List<MediaPost> mergeAndDedupePosts(
     List<MediaPost> current,
     List<MediaPost> incoming,
@@ -97,7 +80,7 @@ class TimelineRepositoryImpl implements TimelineRepository {
     _validateSession(session);
     final persistedSession = session!;
 
-    final response = await _xApiClient.fetchHomeTimeline(
+    final response = await _xApiClient.fetchUserTweets(
       accessToken: persistedSession.accessToken!,
       userId: persistedSession.userId,
       requestType: requestType,
@@ -107,7 +90,8 @@ class TimelineRepositoryImpl implements TimelineRepository {
     );
     final page = _adapter.fromApiResponse(
       response,
-      sourceType: FeedMode.timeline,
+      sourceType: FeedMode.reposted,
+      repostsOnly: true,
     );
     return TimelinePage(
       posts: _extractor.onlyImagePosts(page.posts),

@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../domain/models/feed_mode.dart';
 import '../domain/models/media_post.dart';
 import '../domain/models/post_image.dart';
 
@@ -70,6 +71,16 @@ class PostMediaCard extends StatelessWidget {
                   '@${post.authorUsername}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _MetaChip(label: post.sourceType.shortLabel),
+                    if ((post.reposterUsername ?? '').isNotEmpty)
+                      _MetaChip(label: 'Reposted by @${post.reposterUsername}'),
+                  ],
+                ),
               ],
             ),
           ),
@@ -94,6 +105,29 @@ class PostMediaCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MetaChip extends StatelessWidget {
+  const _MetaChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
       ),
     );
   }

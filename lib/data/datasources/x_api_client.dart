@@ -30,13 +30,47 @@ class XApiClient {
       '{id}',
       userId,
     );
+    return _fetchTimelineLikeResponse(
+      accessToken: accessToken,
+      path: path,
+      requestReason: requestReason,
+      queryParameters: _requestBuilder.buildHomeTimeline(
+        type: requestType,
+        sinceId: sinceId,
+        paginationToken: paginationToken,
+      ),
+    );
+  }
+
+  Future<XApiTimelineResponse> fetchUserTweets({
+    required String accessToken,
+    required String userId,
+    required TimelineRequestType requestType,
+    required String requestReason,
+    String? sinceId,
+    String? paginationToken,
+  }) async {
+    final path = XApiConstants.userTweetsPath.replaceFirst('{id}', userId);
+    return _fetchTimelineLikeResponse(
+      accessToken: accessToken,
+      path: path,
+      requestReason: requestReason,
+      queryParameters: _requestBuilder.buildUserTweets(
+        type: requestType,
+        sinceId: sinceId,
+        paginationToken: paginationToken,
+      ),
+    );
+  }
+
+  Future<XApiTimelineResponse> _fetchTimelineLikeResponse({
+    required String accessToken,
+    required String path,
+    required String requestReason,
+    required Map<String, dynamic> queryParameters,
+  }) async {
     final primaryUrl = '${XApiConstants.primaryV2BaseUrl}$path';
     final fallbackUrl = '${XApiConstants.fallbackV2BaseUrl}$path';
-    final queryParameters = _requestBuilder.build(
-      type: requestType,
-      sinceId: sinceId,
-      paginationToken: paginationToken,
-    );
     final requestHeaders = <String, String>{
       'Authorization': 'Bearer $accessToken',
     };

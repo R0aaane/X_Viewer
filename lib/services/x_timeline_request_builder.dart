@@ -5,7 +5,7 @@ enum TimelineRequestType { initial, newer, next }
 class XTimelineRequestBuilder {
   const XTimelineRequestBuilder();
 
-  Map<String, dynamic> build({
+  Map<String, dynamic> buildHomeTimeline({
     required TimelineRequestType type,
     String? sinceId,
     String? paginationToken,
@@ -28,5 +28,19 @@ class XTimelineRequestBuilder {
       if ((paginationToken ?? '').isNotEmpty)
         'pagination_token': paginationToken,
     };
+  }
+
+  Map<String, dynamic> buildUserTweets({
+    required TimelineRequestType type,
+    String? sinceId,
+    String? paginationToken,
+  }) {
+    final parameters = buildHomeTimeline(
+      type: type,
+      sinceId: sinceId,
+      paginationToken: paginationToken,
+    );
+    parameters.remove('exclude');
+    return parameters;
   }
 }

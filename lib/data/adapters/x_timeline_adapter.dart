@@ -1,5 +1,6 @@
 import '../../data/mappers/x_timeline_includes_mapper.dart';
 import '../../data/models/x_api_timeline_response.dart';
+import '../../domain/models/feed_mode.dart';
 import '../../domain/models/media_post.dart';
 import '../../domain/models/post_image.dart';
 import '../../domain/models/timeline_page.dart';
@@ -9,7 +10,11 @@ class XTimelineAdapter {
 
   final XTimelineIncludesMapper _includesMapper;
 
-  TimelinePage fromApiResponse(XApiTimelineResponse response) {
+  TimelinePage fromApiResponse(
+    XApiTimelineResponse response, {
+    FeedMode sourceType = FeedMode.timeline,
+    bool repostsOnly = false,
+  }) {
     final usersById = _includesMapper.usersById(response.includes);
     final mediaByKey = _includesMapper.mediaByKey(response.includes);
     final tweetsById = _includesMapper.tweetsById(response.includes);
@@ -21,6 +26,8 @@ class XTimelineAdapter {
             usersById: usersById,
             mediaByKey: mediaByKey,
             tweetsById: tweetsById,
+            sourceType: sourceType,
+            repostsOnly: repostsOnly,
           ),
         )
         .whereType<MediaPost>()
@@ -58,6 +65,7 @@ class XTimelineAdapter {
       images: media,
       originalPostUrl: 'https://x.com/$username/status/$postId',
       createdAt: _parseCreatedAt(json['created_at']),
+      sourceType: FeedMode.timeline,
     );
   }
 
@@ -66,7 +74,13 @@ class XTimelineAdapter {
     required Map<String, Map<String, dynamic>> usersById,
     required Map<String, Map<String, dynamic>> mediaByKey,
     required Map<String, Map<String, dynamic>> tweetsById,
+    required FeedMode sourceType,
+    required bool repostsOnly,
   }) {
+    final isRetweet = _retweetedTweetId(tweet) != null;
+    if (repostsOnly && !isRetweet) {
+      return null;
+    }
     final effectiveTweet = resolveEffectiveTweet(
       tweet: tweet,
       tweetsById: tweetsById,
@@ -80,10 +94,9 @@ class XTimelineAdapter {
       tweet: effectiveTweet,
       usersById: usersById,
     );
-    final reposterAuthor =
-        identical(effectiveTweet, tweet)
-            ? null
-            : resolveEffectiveAuthor(tweet: tweet, usersById: usersById);
+    final reposterAuthor = isRetweet
+        ? resolveEffectiveAuthor(tweet: tweet, usersById: usersById)
+        : null;
     final authorUsername = _asString(
       effectiveAuthor?['username'],
       fallback: 'unknown_user',
@@ -104,7 +117,10 @@ class XTimelineAdapter {
       text: _extractText(effectiveTweet),
       images: images,
       originalPostUrl: 'https://x.com/$authorUsername/status/$postId',
-      createdAt: _parseCreatedAt(effectiveTweet['created_at']),
+      createdAt: _parseCreatedAt(
+        isRetweet ? tweet['created_at'] : effectiveTweet['created_at'],
+      ),
+      sourceType: sourceType,
     );
   }
 

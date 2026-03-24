@@ -5,6 +5,7 @@ abstract final class XApiConstants {
   static const fallbackV2BaseUrl = '$fallbackBaseUrl/2';
   static const baseUrl = primaryV2BaseUrl;
   static const userByIdPath = '/users/{id}';
+  static const userTweetsPath = '/users/{id}/tweets';
   static const reverseChronologicalTimelinePath =
       '/users/{id}/timelines/reverse_chronological';
   static const initialMaxResults = 20;
@@ -17,12 +18,16 @@ abstract final class XApiConstants {
   static const expansions = <String>[
     'attachments.media_keys',
     'author_id',
+    'referenced_tweets.id',
+    'referenced_tweets.id.author_id',
   ];
 
   static const tweetFields = <String>[
     'attachments',
     'author_id',
     'created_at',
+    'referenced_tweets',
+    'text',
   ];
 
   static const mediaFields = <String>[
@@ -33,6 +38,7 @@ abstract final class XApiConstants {
   ];
 
   static const userFields = <String>[
+    'id',
     'name',
     'username',
   ];

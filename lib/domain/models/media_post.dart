@@ -1,3 +1,4 @@
+import 'feed_mode.dart';
 import 'post_image.dart';
 
 class MediaPost {
@@ -11,6 +12,7 @@ class MediaPost {
     required this.images,
     required this.originalPostUrl,
     required this.createdAt,
+    required this.sourceType,
     this.reposterName,
     this.reposterUsername,
   });
@@ -26,6 +28,7 @@ class MediaPost {
   final List<PostImage> images;
   final String originalPostUrl;
   final DateTime createdAt;
+  final FeedMode sourceType;
 
   bool get hasImages => images.isNotEmpty;
 
@@ -42,6 +45,7 @@ class MediaPost {
       'images': images.map((image) => image.toJson()).toList(growable: false),
       'originalPostUrl': originalPostUrl,
       'createdAt': createdAt.toIso8601String(),
+      'sourceType': sourceType.name,
     };
   }
 
@@ -69,6 +73,10 @@ class MediaPost {
       originalPostUrl: json['originalPostUrl'] as String? ?? '',
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
+      sourceType: FeedMode.values.firstWhere(
+        (mode) => mode.name == json['sourceType'],
+        orElse: () => FeedMode.timeline,
+      ),
     );
   }
 }
