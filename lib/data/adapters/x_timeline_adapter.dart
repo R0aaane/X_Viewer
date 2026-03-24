@@ -12,6 +12,7 @@ class XTimelineAdapter {
   TimelinePage fromApiResponse(XApiTimelineResponse response) {
     final usersById = _includesMapper.usersById(response.includes);
     final mediaByKey = _includesMapper.mediaByKey(response.includes);
+    final tweetsById = _includesMapper.tweetsById(response.includes);
 
     final posts = response.data
         .map(
@@ -19,6 +20,7 @@ class XTimelineAdapter {
             tweet: tweet,
             usersById: usersById,
             mediaByKey: mediaByKey,
+            tweetsById: tweetsById,
           ),
         )
         .whereType<MediaPost>()
@@ -50,6 +52,8 @@ class XTimelineAdapter {
       postId: postId,
       authorName: _asString(author['name'], fallback: 'Unknown'),
       authorUsername: username,
+      originalAuthorName: _asString(author['name'], fallback: 'Unknown'),
+      originalAuthorUsername: username,
       text: _extractText(json),
       images: media,
       originalPostUrl: 'https://x.com/$username/status/$postId',
@@ -61,28 +65,66 @@ class XTimelineAdapter {
     required Map<String, dynamic> tweet,
     required Map<String, Map<String, dynamic>> usersById,
     required Map<String, Map<String, dynamic>> mediaByKey,
+    required Map<String, Map<String, dynamic>> tweetsById,
   }) {
-    final images = _extractApiImages(tweet, mediaByKey);
+    final effectiveTweet = resolveEffectiveTweet(
+      tweet: tweet,
+      tweetsById: tweetsById,
+    );
+    final images = _extractApiImages(effectiveTweet, mediaByKey);
     if (images.isEmpty) {
       return null;
     }
 
-    final sourceAuthor = usersById[_asString(tweet['author_id'])];
+    final effectiveAuthor = resolveEffectiveAuthor(
+      tweet: effectiveTweet,
+      usersById: usersById,
+    );
+    final reposterAuthor =
+        identical(effectiveTweet, tweet)
+            ? null
+            : resolveEffectiveAuthor(tweet: tweet, usersById: usersById);
     final authorUsername = _asString(
-      sourceAuthor?['username'],
+      effectiveAuthor?['username'],
       fallback: 'unknown_user',
     );
-    final postId = _asString(tweet['id']);
+    final postId = _asString(effectiveTweet['id']);
 
     return MediaPost(
       postId: postId,
-      authorName: _asString(sourceAuthor?['name'], fallback: 'Unknown'),
+      authorName: _asString(effectiveAuthor?['name'], fallback: 'Unknown'),
       authorUsername: authorUsername,
-      text: _extractText(tweet),
+      originalAuthorName: _asString(
+        effectiveAuthor?['name'],
+        fallback: 'Unknown',
+      ),
+      originalAuthorUsername: authorUsername,
+      reposterName: _asStringOrNull(reposterAuthor?['name']),
+      reposterUsername: _asStringOrNull(reposterAuthor?['username']),
+      text: _extractText(effectiveTweet),
       images: images,
       originalPostUrl: 'https://x.com/$authorUsername/status/$postId',
-      createdAt: _parseCreatedAt(tweet['created_at']),
+      createdAt: _parseCreatedAt(effectiveTweet['created_at']),
     );
+  }
+
+  Map<String, dynamic> resolveEffectiveTweet({
+    required Map<String, dynamic> tweet,
+    required Map<String, Map<String, dynamic>> tweetsById,
+  }) {
+    final retweetedId = _retweetedTweetId(tweet);
+    if (retweetedId == null) {
+      return tweet;
+    }
+
+    return tweetsById[retweetedId] ?? tweet;
+  }
+
+  Map<String, dynamic>? resolveEffectiveAuthor({
+    required Map<String, dynamic> tweet,
+    required Map<String, Map<String, dynamic>> usersById,
+  }) {
+    return usersById[_asString(tweet['author_id'])];
   }
 
   List<PostImage> _extractApiImages(
@@ -134,6 +176,26 @@ class XTimelineAdapter {
     return _asString(json['text']);
   }
 
+  String? _retweetedTweetId(Map<String, dynamic> tweet) {
+    final referencedTweets =
+        (tweet['referenced_tweets'] as List<dynamic>? ?? const [])
+            .whereType<Map>()
+            .map((entry) => Map<String, dynamic>.from(entry));
+
+    for (final referencedTweet in referencedTweets) {
+      if (_asString(referencedTweet['type']) != 'retweeted') {
+        continue;
+      }
+
+      final tweetId = _asString(referencedTweet['id']);
+      if (tweetId.isNotEmpty) {
+        return tweetId;
+      }
+    }
+
+    return null;
+  }
+
   DateTime _parseCreatedAt(Object? value) {
     final parsed = DateTime.tryParse(_asString(value));
     return parsed ?? DateTime.now();
@@ -144,6 +206,11 @@ class XTimelineAdapter {
       return value;
     }
     return fallback;
+  }
+
+  String? _asStringOrNull(Object? value) {
+    final result = _asString(value);
+    return result.isEmpty ? null : result;
   }
 
   int _asInt(Object? value) {

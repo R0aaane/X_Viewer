@@ -9,6 +9,7 @@ class PostMediaCard extends StatelessWidget {
     super.key,
     required this.post,
     required this.image,
+    required this.onPreview,
     required this.onSave,
     required this.onOpenPost,
     required this.isSaved,
@@ -16,6 +17,7 @@ class PostMediaCard extends StatelessWidget {
 
   final MediaPost post;
   final PostImage image;
+  final VoidCallback onPreview;
   final VoidCallback onSave;
   final VoidCallback onOpenPost;
   final bool isSaved;
@@ -28,17 +30,28 @@ class PostMediaCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: CachedNetworkImage(
-              imageUrl: image.imageUrl,
-              fit: BoxFit.cover,
-              width: double.infinity,
-              placeholder: (context, url) => const Center(
-                child: CircularProgressIndicator(),
-              ),
-              errorWidget: (context, url, error) => const ColoredBox(
-                color: Color(0xFFE5E7EB),
-                child: Center(child: Icon(Icons.broken_image_outlined)),
-              ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                CachedNetworkImage(
+                  imageUrl: image.imageUrl,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  placeholder: (context, url) => const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                  errorWidget: (context, url, error) => const ColoredBox(
+                    color: Color(0xFFE5E7EB),
+                    child: Center(child: Icon(Icons.broken_image_outlined)),
+                  ),
+                ),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: onPreview,
+                  ),
+                ),
+              ],
             ),
           ),
           Padding(

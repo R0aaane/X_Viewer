@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/app_routes.dart';
 import '../../../../services/service_providers.dart';
+import '../../../settings/presentation/providers/app_preferences_controller.dart';
+import '../../../settings/presentation/widgets/app_preferences_dialog.dart';
 import '../../../../widgets/async_value_view.dart';
 import '../../../../widgets/section_empty_view.dart';
 import '../models/saved_media_layout.dart';
@@ -33,9 +35,19 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
     super.dispose();
   }
 
+  Future<void> _showAppPreferencesDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => const AppPreferencesDialog(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final savedState = ref.watch(savedMediaControllerProvider);
+    final savedItemsLabel = ref.watch(
+      appPreferencesProvider.select((value) => value.savedItemsLabel),
+    );
     final filter = ref.watch(savedMediaFilterProvider);
     final authors = ref.watch(savedMediaAuthorsProvider);
     final tags = ref.watch(savedMediaTagsProvider);
@@ -50,7 +62,7 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Saved Images'),
+        title: Text(savedItemsLabel),
         leading: IconButton(
           onPressed: () => context.go(AppRoutes.timeline),
           icon: const Icon(Icons.arrow_back_rounded),
@@ -73,6 +85,11 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
             },
             icon: const Icon(Icons.photo_library_outlined),
             tooltip: 'Open gallery app',
+          ),
+          IconButton(
+            onPressed: _showAppPreferencesDialog,
+            icon: const Icon(Icons.tune_rounded),
+            tooltip: 'Display settings',
           ),
         ],
       ),
@@ -118,8 +135,8 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
               onRetry: () => ref.invalidate(savedMediaControllerProvider),
               data: (records) {
                 if (records.isEmpty) {
-                  return const SectionEmptyView(
-                    title: 'No saved images yet',
+                  return SectionEmptyView(
+                    title: 'No $savedItemsLabel yet',
                     message: 'Save an image from the timeline screen first.',
                   );
                 }

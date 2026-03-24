@@ -9,7 +9,6 @@ import '../../../../data/datasources/x_api_client.dart';
 import '../../../../data/mappers/x_timeline_includes_mapper.dart';
 import '../../../../data/repositories/timeline_repository_impl.dart';
 import '../../../../domain/models/auth_session.dart';
-import '../../../../domain/models/media_post.dart';
 import '../../../../domain/models/timeline_page.dart';
 import '../../../../domain/repositories/timeline_repository.dart';
 import '../../../../services/timeline_cache_service.dart';
