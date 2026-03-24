@@ -32,12 +32,28 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   static const double _minGridItemExtent = 112;
   static const double _maxGridItemExtent = 220;
 
+  final GlobalKey _gridAreaKey = GlobalKey();
+  final Map<String, GlobalKey> _tileKeys = <String, GlobalKey>{};
+  final ValueNotifier<_BatchSaveProgress> _batchSaveProgressNotifier =
+      ValueNotifier(const _BatchSaveProgress.idle());
+
   double _gridItemExtent = _defaultGridItemExtent;
+  bool _isSelectionMode = false;
+  bool _dragSelecting = false;
+  String? _dragSelectionAnchorId;
+  Set<String> _selectedIds = <String>{};
+  Map<String, TimelineEntry> _visibleEntriesById = const <String, TimelineEntry>{};
 
   @override
   void initState() {
     super.initState();
     _loadGridPreferences();
+  }
+
+  @override
+  void dispose() {
+    _batchSaveProgressNotifier.dispose();
+    super.dispose();
   }
 
   Future<void> _loadGridPreferences() async {
@@ -287,6 +303,202 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     }
   }
 
+  void _enterSelectionMode(String id) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isSelectionMode = true;
+      _dragSelecting = true;
+      _dragSelectionAnchorId = id;
+      _selectedIds = {..._selectedIds, id};
+    });
+  }
+
+  void _toggleSelection(String id) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      final next = {..._selectedIds};
+      if (!next.add(id)) {
+        next.remove(id);
+      }
+      _selectedIds = next;
+      if (_selectedIds.isEmpty) {
+        _isSelectionMode = false;
+        _dragSelecting = false;
+        _dragSelectionAnchorId = null;
+      }
+    });
+  }
+
+  void _clearSelection() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isSelectionMode = false;
+      _selectedIds = <String>{};
+      _dragSelectionAnchorId = null;
+      _dragSelecting = false;
+    });
+  }
+
+  void _selectAllVisible() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isSelectionMode = true;
+      _selectedIds = _visibleEntriesById.keys.toSet();
+    });
+  }
+
+  Future<void> _saveSelectedItems() async {
+    final selectedEntries = _selectedIds
+        .map((id) => _visibleEntriesById[id])
+        .whereType<TimelineEntry>()
+        .toList(growable: false);
+    if (selectedEntries.isEmpty) {
+      return;
+    }
+
+    _batchSaveProgressNotifier.value = _BatchSaveProgress(
+      current: 0,
+      total: selectedEntries.length,
+      successCount: 0,
+      failureCount: 0,
+      inProgress: true,
+    );
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => ValueListenableBuilder<_BatchSaveProgress>(
+        valueListenable: _batchSaveProgressNotifier,
+        builder: (context, progress, _) {
+          return AlertDialog(
+            title: const Text('Saving selected images'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('${progress.current} / ${progress.total} saving'),
+                const SizedBox(height: 12),
+                LinearProgressIndicator(
+                  value: progress.total == 0
+                      ? null
+                      : progress.current / progress.total,
+                ),
+                const SizedBox(height: 12),
+                Text('Success: ${progress.successCount}'),
+                Text('Failed: ${progress.failureCount}'),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    var successCount = 0;
+    var failureCount = 0;
+
+    for (var index = 0; index < selectedEntries.length; index++) {
+      final entry = selectedEntries[index];
+      try {
+        final result = await ref
+            .read(savedMediaControllerProvider.notifier)
+            .saveImage(post: entry.post, image: entry.image);
+        if (result.isSuccess || result.failureReason == SaveFailureReason.duplicate) {
+          successCount++;
+        } else {
+          failureCount++;
+        }
+      } catch (_) {
+        failureCount++;
+      }
+
+      _batchSaveProgressNotifier.value = _BatchSaveProgress(
+        current: index + 1,
+        total: selectedEntries.length,
+        successCount: successCount,
+        failureCount: failureCount,
+        inProgress: true,
+      );
+    }
+
+    _batchSaveProgressNotifier.value = _BatchSaveProgress(
+      current: selectedEntries.length,
+      total: selectedEntries.length,
+      successCount: successCount,
+      failureCount: failureCount,
+      inProgress: false,
+    );
+
+    if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Saved $successCount items, failed $failureCount items'),
+      ),
+    );
+    _clearSelection();
+  }
+
+  String? _hitTestGridItem(Offset globalPosition) {
+    for (final entry in _tileKeys.entries) {
+      final context = entry.value.currentContext;
+      if (context == null) {
+        continue;
+      }
+      final renderObject = context.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.hasSize) {
+        continue;
+      }
+      final topLeft = renderObject.localToGlobal(Offset.zero);
+      final rect = topLeft & renderObject.size;
+      if (rect.contains(globalPosition)) {
+        return entry.key;
+      }
+    }
+    return null;
+  }
+
+  GlobalKey _tileKeyFor(String id) {
+    return _tileKeys.putIfAbsent(id, GlobalKey.new);
+  }
+
+  void _handleDragSelectionAt(Offset globalPosition) {
+    if (!_isSelectionMode || !_dragSelecting) {
+      return;
+    }
+    final hitId = _hitTestGridItem(globalPosition);
+    if (hitId == null ||
+        hitId == _dragSelectionAnchorId ||
+        _selectedIds.contains(hitId)) {
+      return;
+    }
+    setState(() {
+      _selectedIds = {..._selectedIds, hitId};
+      _dragSelectionAnchorId = hitId;
+    });
+  }
+
+  void _finishDragSelection() {
+    if (!_dragSelecting) {
+      return;
+    }
+    setState(() {
+      _dragSelecting = false;
+      _dragSelectionAnchorId = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final timelineState = ref.watch(timelineControllerProvider);
@@ -299,36 +511,64 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
         <String>{};
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('X Image Feed'),
-        actions: [
-          IconButton(
-            onPressed: _showGridSizeDialog,
-            icon: const Icon(Icons.grid_view_rounded),
-            tooltip: 'Display size',
-          ),
-          IconButton(
-            onPressed: () => context.go(AppRoutes.saved),
-            icon: const Icon(Icons.bookmark_rounded),
-            tooltip: savedItemsLabel,
-          ),
-          IconButton(
-            onPressed: _showAppPreferencesDialog,
-            icon: const Icon(Icons.tune_rounded),
-            tooltip: 'Display settings',
-          ),
-          IconButton(
-            onPressed: () async {
-              await ref.read(authControllerProvider.notifier).signOut();
-              if (context.mounted) {
-                context.go(AppRoutes.login);
-              }
-            },
-            icon: const Icon(Icons.logout_rounded),
-            tooltip: 'Sign out',
-          ),
-        ],
-      ),
+      appBar: _isSelectionMode
+          ? AppBar(
+              leading: IconButton(
+                onPressed: _clearSelection,
+                icon: const Icon(Icons.close_rounded),
+                tooltip: 'Exit selection mode',
+              ),
+              title: Text('${_selectedIds.length} selected'),
+              actions: [
+                IconButton(
+                  onPressed: _visibleEntriesById.isEmpty ? null : _selectAllVisible,
+                  icon: const Icon(Icons.select_all_rounded),
+                  tooltip: 'Select all',
+                ),
+                IconButton(
+                  onPressed: _selectedIds.isEmpty
+                      ? null
+                      : _clearSelection,
+                  icon: const Icon(Icons.clear_all_rounded),
+                  tooltip: 'Clear selection',
+                ),
+                IconButton(
+                  onPressed: _selectedIds.isEmpty ? null : _saveSelectedItems,
+                  icon: const Icon(Icons.download_rounded),
+                  tooltip: 'Save selected',
+                ),
+              ],
+            )
+          : AppBar(
+              title: const Text('X Image Feed'),
+              actions: [
+                IconButton(
+                  onPressed: _showGridSizeDialog,
+                  icon: const Icon(Icons.grid_view_rounded),
+                  tooltip: 'Display size',
+                ),
+                IconButton(
+                  onPressed: () => context.go(AppRoutes.saved),
+                  icon: const Icon(Icons.bookmark_rounded),
+                  tooltip: savedItemsLabel,
+                ),
+                IconButton(
+                  onPressed: _showAppPreferencesDialog,
+                  icon: const Icon(Icons.tune_rounded),
+                  tooltip: 'Display settings',
+                ),
+                IconButton(
+                  onPressed: () async {
+                    await ref.read(authControllerProvider.notifier).signOut();
+                    if (context.mounted) {
+                      context.go(AppRoutes.login);
+                    }
+                  },
+                  icon: const Icon(Icons.logout_rounded),
+                  tooltip: 'Sign out',
+                ),
+              ],
+            ),
       body: AsyncValueView(
         value: timelineState,
         loadingLabel: 'Loading image posts...',
@@ -337,14 +577,27 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
           final selectedMode = screenState.selectedMode;
           final feed = screenState.feedStateFor(selectedMode);
           final items = _flattenPosts(feed.items);
+          _visibleEntriesById = {
+            for (final entry in items) _timelineEntryKey(entry): entry,
+          };
+          _selectedIds = _selectedIds
+              .where(_visibleEntriesById.containsKey)
+              .toSet();
+          if (_selectedIds.isEmpty && _isSelectionMode) {
+            _isSelectionMode = false;
+          }
           final itemIndexByKey = <String, int>{
             for (var index = 0; index < items.length; index++)
               _timelineEntryKey(items[index]): index,
           };
 
           return RefreshIndicator(
-            onRefresh: () =>
-                ref.read(timelineControllerProvider.notifier).refreshSelected(),
+            onRefresh: () async {
+              if (_isSelectionMode) {
+                return;
+              }
+              await ref.read(timelineControllerProvider.notifier).refreshSelected();
+            },
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final availableWidth =
@@ -359,110 +612,145 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
                     .clamp(_minGridItemExtent, widthLimitedExtent)
                     .toDouble();
 
-                return CustomScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  slivers: [
-                    SliverToBoxAdapter(
-                      child: _FeedModeHeader(
-                        selectedMode: selectedMode,
-                        onModeSelected: (mode) {
-                          ref
-                              .read(timelineControllerProvider.notifier)
-                              .selectMode(mode);
-                        },
-                        onRefresh: () {
-                          ref
-                              .read(timelineControllerProvider.notifier)
-                              .refreshSelected();
-                        },
-                        isRefreshing: feed.isRefreshing,
-                      ),
-                    ),
-                    if (feed.isRefreshing)
-                      const SliverToBoxAdapter(
-                        child: LinearProgressIndicator(minHeight: 2),
-                      ),
-                    if ((feed.errorMessage ?? '').isNotEmpty && items.isEmpty)
+                return Listener(
+                  onPointerMove: (event) => _handleDragSelectionAt(event.position),
+                  onPointerUp: (_) => _finishDragSelection(),
+                  onPointerCancel: (_) => _finishDragSelection(),
+                  child: CustomScrollView(
+                    key: _gridAreaKey,
+                    physics: _isSelectionMode
+                        ? const ClampingScrollPhysics()
+                        : const AlwaysScrollableScrollPhysics(),
+                    slivers: [
                       SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                          child: _FeedErrorCard(
-                            message: feed.errorMessage!,
-                            onRetry: () {
-                              ref
-                                  .read(timelineControllerProvider.notifier)
-                                  .refreshSelected();
-                            },
-                          ),
-                        ),
-                      ),
-                    if (!feed.hasFetched && selectedMode == FeedMode.timeline)
-                      SliverFillRemaining(
-                        hasScrollBody: false,
-                        child: _TimelineNotFetchedView(
+                        child: _FeedModeHeader(
+                          selectedMode: selectedMode,
+                          onModeSelected: (mode) {
+                            _clearSelection();
+                            ref
+                                .read(timelineControllerProvider.notifier)
+                                .selectMode(mode);
+                          },
                           onRefresh: () {
                             ref
                                 .read(timelineControllerProvider.notifier)
-                                .refreshMode(FeedMode.timeline);
+                                .refreshSelected();
                           },
-                        ),
-                      )
-                    else if (feed.hasFetched && items.isEmpty)
-                      SliverFillRemaining(
-                        hasScrollBody: false,
-                        child: _ModeEmptyView(mode: selectedMode),
-                      )
-                    else
-                      SliverPadding(
-                        padding: const EdgeInsets.all(16),
-                        sliver: SliverGrid(
-                          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: maxExtent,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                            childAspectRatio: 0.56,
-                          ),
-                          delegate: SliverChildBuilderDelegate(
-                            (context, index) {
-                              final entry = items[index];
-                              return PostMediaCard(
-                                key: ValueKey(_timelineEntryKey(entry)),
-                                post: entry.post,
-                                image: entry.image,
-                                onPreview: () => _showImagePreview(entry),
-                                isSaved: savedMediaKeys.contains(
-                                  entry.image.mediaKey,
-                                ),
-                                onSave: () => _saveImage(entry),
-                                onOpenPost: () => _openPost(entry.post),
-                              );
-                            },
-                            childCount: items.length,
-                            findChildIndexCallback: (key) {
-                              if (key is! ValueKey<String>) {
-                                return null;
-                              }
-                              return itemIndexByKey[key.value];
-                            },
-                          ),
+                          isRefreshing: feed.isRefreshing,
                         ),
                       ),
-                    if (feed.hasFetched && items.isNotEmpty)
-                      SliverToBoxAdapter(
-                        child: _TimelineFooter(
-                          isLoadingMore: feed.isLoadingMore,
-                          hasMore: feed.hasMore,
-                          errorMessage: items.isNotEmpty
-                              ? feed.errorMessage
-                              : null,
-                          onLoadMore: () {
-                            ref
-                                .read(timelineControllerProvider.notifier)
-                                .loadNextPage();
-                          },
+                      if (feed.isRefreshing)
+                        const SliverToBoxAdapter(
+                          child: LinearProgressIndicator(minHeight: 2),
                         ),
-                      ),
-                  ],
+                      if ((feed.errorMessage ?? '').isNotEmpty && items.isEmpty)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                            child: _FeedErrorCard(
+                              message: feed.errorMessage!,
+                              onRetry: () {
+                                ref
+                                    .read(timelineControllerProvider.notifier)
+                                    .refreshSelected();
+                              },
+                            ),
+                          ),
+                        ),
+                      if (!feed.hasFetched && selectedMode == FeedMode.timeline)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: _TimelineNotFetchedView(
+                            onRefresh: () {
+                              ref
+                                  .read(timelineControllerProvider.notifier)
+                                  .refreshMode(FeedMode.timeline);
+                            },
+                          ),
+                        )
+                      else if (feed.hasFetched && items.isEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: _ModeEmptyView(mode: selectedMode),
+                        )
+                      else
+                        SliverPadding(
+                          padding: const EdgeInsets.all(16),
+                          sliver: SliverGrid(
+                            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                              maxCrossAxisExtent: maxExtent,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
+                              childAspectRatio: 0.56,
+                            ),
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) {
+                                final entry = items[index];
+                                final entryId = _timelineEntryKey(entry);
+                                return GestureDetector(
+                                  key: ValueKey(entryId),
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: _isSelectionMode
+                                      ? () => _toggleSelection(entryId)
+                                      : null,
+                                  onLongPressStart: (_) {
+                                    _enterSelectionMode(entryId);
+                                  },
+                                  onLongPressMoveUpdate: (details) {
+                                    _handleDragSelectionAt(details.globalPosition);
+                                  },
+                                  onLongPressEnd: (_) {
+                                    _finishDragSelection();
+                                  },
+                                  child: KeyedSubtree(
+                                    key: _tileKeyFor(entryId),
+                                    child: PostMediaCard(
+                                      post: entry.post,
+                                      image: entry.image,
+                                      onPreview: _isSelectionMode
+                                          ? () => _toggleSelection(entryId)
+                                          : () => _showImagePreview(entry),
+                                      isSaved: savedMediaKeys.contains(
+                                        entry.image.mediaKey,
+                                      ),
+                                      isSelected: _selectedIds.contains(entryId),
+                                      onSave: _isSelectionMode
+                                          ? () => _toggleSelection(entryId)
+                                          : () => _saveImage(entry),
+                                      onOpenPost: _isSelectionMode
+                                          ? () => _toggleSelection(entryId)
+                                          : () => _openPost(entry.post),
+                                    ),
+                                  ),
+                                );
+                              },
+                              childCount: items.length,
+                              findChildIndexCallback: (key) {
+                                if (key is! ValueKey<String>) {
+                                  return null;
+                                }
+                                return itemIndexByKey[key.value];
+                              },
+                            ),
+                          ),
+                        ),
+                      if (feed.hasFetched && items.isNotEmpty)
+                        SliverToBoxAdapter(
+                          child: _TimelineFooter(
+                            isLoadingMore: feed.isLoadingMore,
+                            hasMore: feed.hasMore,
+                            errorMessage: items.isNotEmpty
+                                ? feed.errorMessage
+                                : null,
+                            onLoadMore: () {
+                              ref
+                                  .read(timelineControllerProvider.notifier)
+                                  .loadNextPage();
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
                 );
               },
             ),
@@ -478,6 +766,29 @@ class TimelineEntry {
 
   final MediaPost post;
   final PostImage image;
+}
+
+class _BatchSaveProgress {
+  const _BatchSaveProgress({
+    required this.current,
+    required this.total,
+    required this.successCount,
+    required this.failureCount,
+    required this.inProgress,
+  });
+
+  const _BatchSaveProgress.idle()
+      : current = 0,
+        total = 0,
+        successCount = 0,
+        failureCount = 0,
+        inProgress = false;
+
+  final int current;
+  final int total;
+  final int successCount;
+  final int failureCount;
+  final bool inProgress;
 }
 
 class _FeedModeHeader extends StatelessWidget {

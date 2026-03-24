@@ -1,22 +1,58 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../../core/constants/app_routes.dart';
 import '../../../../core/utils/date_formatter.dart';
 import '../../../../domain/models/save_location_type.dart';
+import '../../../../domain/models/saved_media_record.dart';
 import '../../../../services/service_providers.dart';
 import '../../../../widgets/section_empty_view.dart';
 import '../providers/saved_media_controller.dart';
 
-class SavedMediaDetailScreen extends ConsumerWidget {
+class SavedMediaDetailScreen extends ConsumerStatefulWidget {
   const SavedMediaDetailScreen({super.key, required this.recordId});
 
   final String recordId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final record = ref.watch(savedMediaRecordProvider(recordId));
+  ConsumerState<SavedMediaDetailScreen> createState() =>
+      _SavedMediaDetailScreenState();
+}
+
+class _SavedMediaDetailScreenState
+    extends ConsumerState<SavedMediaDetailScreen> {
+  late final FocusNode _readerFocusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _readerFocusNode = FocusNode(debugLabel: 'saved-media-reader');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _readerFocusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _readerFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final allRecords = ref.watch(savedMediaControllerProvider).valueOrNull ??
+        const <SavedMediaRecord>[];
+    final savedFilteredRecords = ref.watch(savedMediaFilteredRecordsProvider);
+    final filteredRecords =
+        savedFilteredRecords.isNotEmpty ? savedFilteredRecords : allRecords;
+    final record = ref.watch(savedMediaRecordProvider(widget.recordId));
 
     if (record == null) {
       return Scaffold(
@@ -28,154 +64,314 @@ class SavedMediaDetailScreen extends ConsumerWidget {
       );
     }
 
+    final recordList = filteredRecords.any(
+      (entry) => entry.recordId == record.recordId,
+    )
+        ? filteredRecords
+        : allRecords;
+    final currentIndex = recordList.indexWhere(
+      (entry) => entry.recordId == record.recordId,
+    );
+    final hasPrev = currentIndex > 0;
+    final hasNext = currentIndex >= 0 && currentIndex < recordList.length - 1;
     final previewFile = File(record.previewFilePath);
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('@${record.authorUsername}'),
-        actions: [
-          IconButton(
-            onPressed: () => ref
-                .read(savedMediaControllerProvider.notifier)
-                .toggleFavorite(record.recordId),
-            icon: Icon(
-              record.favorite ? Icons.favorite : Icons.favorite_border,
-            ),
-            tooltip: 'Toggle favorite',
+
+    return Shortcuts(
+      shortcuts: <ShortcutActivator, Intent>{
+        const SingleActivator(LogicalKeyboardKey.arrowLeft):
+            const _NavigatePreviousIntent(),
+        const SingleActivator(LogicalKeyboardKey.arrowRight):
+            const _NavigateNextIntent(),
+        const SingleActivator(LogicalKeyboardKey.escape): const DismissIntent(),
+      },
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          _NavigatePreviousIntent: CallbackAction<_NavigatePreviousIntent>(
+            onInvoke: (_) {
+              if (_shouldHandleKeyboardNavigation()) {
+                _prev(recordList, currentIndex);
+              }
+              return null;
+            },
           ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 920),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: AspectRatio(
-                    aspectRatio: 1,
-                    child: previewFile.existsSync()
-                        ? Image.file(previewFile, fit: BoxFit.contain)
-                        : const ColoredBox(
-                            color: Color(0xFFE5E7EB),
-                            child: Icon(Icons.image_not_supported_outlined),
-                          ),
+          _NavigateNextIntent: CallbackAction<_NavigateNextIntent>(
+            onInvoke: (_) {
+              if (_shouldHandleKeyboardNavigation()) {
+                _next(recordList, currentIndex);
+              }
+              return null;
+            },
+          ),
+          DismissIntent: CallbackAction<DismissIntent>(
+            onInvoke: (_) {
+              if (Navigator.of(context).canPop()) {
+                Navigator.of(context).maybePop();
+              }
+              return null;
+            },
+          ),
+        },
+        child: Focus(
+          autofocus: true,
+          focusNode: _readerFocusNode,
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text('@${record.authorUsername}'),
+              actions: [
+                IconButton(
+                  onPressed: () => ref
+                      .read(savedMediaControllerProvider.notifier)
+                      .toggleFavorite(record.recordId),
+                  icon: Icon(
+                    record.favorite ? Icons.favorite : Icons.favorite_border,
                   ),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            record.authorName,
-                            style: Theme.of(context).textTheme.headlineSmall,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '@${record.authorUsername}',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        FilledButton.tonalIcon(
-                          onPressed: () => _openPost(context, ref, record.originalPostUrl),
-                          icon: const Icon(Icons.open_in_new_rounded),
-                          label: const Text('Open post'),
-                        ),
-                        if (record.saveLocationType == SaveLocationType.gallery)
-                          FilledButton.tonalIcon(
-                            onPressed: () => _openGallery(context, ref),
-                            icon: const Icon(Icons.photo_library_outlined),
-                            label: const Text('Gallery'),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-                if (record.text.trim().isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Text(record.text, style: Theme.of(context).textTheme.bodyLarge),
-                ],
-                const SizedBox(height: 20),
-                _SectionCard(
-                  title: 'Tags',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          ...record.tags.map((tag) {
-                            return InputChip(
-                              label: Text('#$tag'),
-                              onDeleted: () => ref
-                                  .read(savedMediaControllerProvider.notifier)
-                                  .removeTag(recordId: record.recordId, tag: tag),
-                            );
-                          }),
-                          ActionChip(
-                            onPressed: () => _showAddTagDialog(context, ref, record.recordId),
-                            avatar: const Icon(Icons.add_rounded),
-                            label: const Text('Add tag'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                _SectionCard(
-                  title: 'Saved info',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _InfoRow(label: 'Saved at', value: DateFormatter.shortDateTime(record.savedAt)),
-                      _InfoRow(label: 'Post time', value: DateFormatter.shortDateTime(record.createdAt)),
-                      _InfoRow(
-                        label: 'Favorite',
-                        value: record.favorite ? 'Yes' : 'No',
-                      ),
-                      _InfoRow(
-                        label: 'Save location',
-                        value: record.saveLocationType == SaveLocationType.gallery
-                            ? 'Gallery'
-                            : 'App storage',
-                      ),
-                      _InfoRow(label: 'Saved path', value: record.localSavedPath),
-                      _InfoRow(label: 'Preview path', value: record.previewFilePath),
-                      _InfoRow(label: 'Image URL', value: record.imageUrl),
-                      _InfoRow(label: 'Source URL', value: record.sourceImageUrl),
-                      if ((record.galleryContentUri ?? '').isNotEmpty)
-                        _InfoRow(
-                          label: 'Gallery URI',
-                          value: record.galleryContentUri!,
-                        ),
-                      if ((record.galleryDisplayName ?? '').isNotEmpty)
-                        _InfoRow(
-                          label: 'Gallery name',
-                          value: record.galleryDisplayName!,
-                        ),
-                    ],
-                  ),
+                  tooltip: 'Toggle favorite',
                 ),
               ],
+            ),
+            body: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 920),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildReader(
+                        context: context,
+                        previewFile: previewFile,
+                        hasPrev: hasPrev,
+                        hasNext: hasNext,
+                        onPrev: () => _prev(recordList, currentIndex),
+                        onNext: () => _next(recordList, currentIndex),
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  record.authorName,
+                                  style: Theme.of(context).textTheme.headlineSmall,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '@${record.authorUsername}',
+                                  style: Theme.of(context).textTheme.titleMedium,
+                                ),
+                              ],
+                            ),
+                          ),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              FilledButton.tonalIcon(
+                                onPressed: () => _openPost(
+                                  context,
+                                  ref,
+                                  record.originalPostUrl,
+                                ),
+                                icon: const Icon(Icons.open_in_new_rounded),
+                                label: const Text('Open post'),
+                              ),
+                              if (record.saveLocationType ==
+                                  SaveLocationType.gallery)
+                                FilledButton.tonalIcon(
+                                  onPressed: () => _openGallery(context, ref),
+                                  icon: const Icon(Icons.photo_library_outlined),
+                                  label: const Text('Gallery'),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      if (record.text.trim().isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          record.text,
+                          style: Theme.of(context).textTheme.bodyLarge,
+                        ),
+                      ],
+                      const SizedBox(height: 20),
+                      _SectionCard(
+                        title: 'Tags',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                ...record.tags.map((tag) {
+                                  return InputChip(
+                                    label: Text('#$tag'),
+                                    onDeleted: () => ref
+                                        .read(savedMediaControllerProvider.notifier)
+                                        .removeTag(
+                                          recordId: record.recordId,
+                                          tag: tag,
+                                        ),
+                                  );
+                                }),
+                                ActionChip(
+                                  onPressed: () => _showAddTagDialog(
+                                    context,
+                                    ref,
+                                    record.recordId,
+                                  ),
+                                  avatar: const Icon(Icons.add_rounded),
+                                  label: const Text('Add tag'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _SectionCard(
+                        title: 'Saved info',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _InfoRow(
+                              label: 'Saved at',
+                              value: DateFormatter.shortDateTime(record.savedAt),
+                            ),
+                            _InfoRow(
+                              label: 'Post time',
+                              value: DateFormatter.shortDateTime(record.createdAt),
+                            ),
+                            _InfoRow(
+                              label: 'Favorite',
+                              value: record.favorite ? 'Yes' : 'No',
+                            ),
+                            _InfoRow(
+                              label: 'Save location',
+                              value: record.saveLocationType ==
+                                      SaveLocationType.gallery
+                                  ? 'Gallery'
+                                  : 'App storage',
+                            ),
+                            _InfoRow(
+                              label: 'Saved path',
+                              value: record.localSavedPath,
+                            ),
+                            _InfoRow(
+                              label: 'Preview path',
+                              value: record.previewFilePath,
+                            ),
+                            _InfoRow(
+                              label: 'Image URL',
+                              value: record.imageUrl,
+                            ),
+                            _InfoRow(
+                              label: 'Source URL',
+                              value: record.sourceImageUrl,
+                            ),
+                            if ((record.galleryContentUri ?? '').isNotEmpty)
+                              _InfoRow(
+                                label: 'Gallery URI',
+                                value: record.galleryContentUri!,
+                              ),
+                            if ((record.galleryDisplayName ?? '').isNotEmpty)
+                              _InfoRow(
+                                label: 'Gallery name',
+                                value: record.galleryDisplayName!,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildReader({
+    required BuildContext context,
+    required File previewFile,
+    required bool hasPrev,
+    required bool hasNext,
+    required VoidCallback onPrev,
+    required VoidCallback onNext,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: previewFile.existsSync()
+                  ? Image.file(previewFile, fit: BoxFit.contain)
+                  : const ColoredBox(
+                      color: Color(0xFFE5E7EB),
+                      child: Icon(Icons.image_not_supported_outlined),
+                    ),
+            ),
+            Positioned(
+              left: 12,
+              top: 0,
+              bottom: 0,
+              child: _ReaderNavigationButton(
+                icon: Icons.chevron_left_rounded,
+                tooltip: 'Previous',
+                enabled: hasPrev,
+                onPressed: onPrev,
+              ),
+            ),
+            Positioned(
+              right: 12,
+              top: 0,
+              bottom: 0,
+              child: _ReaderNavigationButton(
+                icon: Icons.chevron_right_rounded,
+                tooltip: 'Next',
+                enabled: hasNext,
+                onPressed: onNext,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _prev(List<SavedMediaRecord> records, int currentIndex) {
+    if (currentIndex <= 0) {
+      return;
+    }
+
+    final target = records[currentIndex - 1];
+    context.go(AppRoutes.savedDetailPath(target.recordId));
+  }
+
+  void _next(List<SavedMediaRecord> records, int currentIndex) {
+    if (currentIndex < 0 || currentIndex >= records.length - 1) {
+      return;
+    }
+
+    final target = records[currentIndex + 1];
+    context.go(AppRoutes.savedDetailPath(target.recordId));
+  }
+
+  bool _shouldHandleKeyboardNavigation() {
+    if (!_readerFocusNode.hasFocus) {
+      return false;
+    }
+
+    final focusedContext = FocusManager.instance.primaryFocus?.context;
+    final focusedWidget = focusedContext?.widget;
+    return focusedWidget is! EditableText;
   }
 
   Future<void> _showAddTagDialog(
@@ -219,6 +415,10 @@ class SavedMediaDetailScreen extends ConsumerWidget {
     await ref
         .read(savedMediaControllerProvider.notifier)
         .addTag(recordId: recordId, rawTag: value);
+
+    if (mounted) {
+      _readerFocusNode.requestFocus();
+    }
   }
 
   Future<void> _openPost(BuildContext context, WidgetRef ref, String url) async {
@@ -243,6 +443,52 @@ class SavedMediaDetailScreen extends ConsumerWidget {
         ).showSnackBar(SnackBar(content: Text(error.toString())));
       }
     }
+  }
+}
+
+class _NavigatePreviousIntent extends Intent {
+  const _NavigatePreviousIntent();
+}
+
+class _NavigateNextIntent extends Intent {
+  const _NavigateNextIntent();
+}
+
+class _ReaderNavigationButton extends StatelessWidget {
+  const _ReaderNavigationButton({
+    required this.icon,
+    required this.tooltip,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.35),
+          shape: BoxShape.circle,
+        ),
+        child: IconButton(
+          onPressed: enabled ? onPressed : null,
+          icon: Icon(icon, size: 28),
+          tooltip: tooltip,
+          color: Colors.white,
+          disabledColor: Colors.white38,
+          constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+          style: IconButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            shape: const CircleBorder(),
+          ),
+        ),
+      ),
+    );
   }
 }
 
