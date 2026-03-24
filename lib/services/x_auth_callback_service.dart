@@ -61,6 +61,22 @@ class XAuthCallbackService {
     }
   }
 
+  Future<Uri?> consumePendingCallback(String redirectUri) async {
+    debugPrint(
+      '[xviewer][flutter] Checking for pending OAuth callback. redirectUri=$redirectUri',
+    );
+    final pendingUrl = await _consumePendingCallbackUrl();
+    final pendingUri = _tryParseMatchingUri(pendingUrl, redirectUri);
+    if (pendingUri == null) {
+      debugPrint('[xviewer][flutter] No pending OAuth callback was available.');
+    } else {
+      debugPrint(
+        '[xviewer][flutter] Consumed pending OAuth callback URL: $pendingUri',
+      );
+    }
+    return pendingUri;
+  }
+
   Future<String?> _consumePendingCallbackUrl() async {
     try {
       final url = await _methodChannel.invokeMethod<String>(
@@ -91,7 +107,7 @@ class XAuthCallbackService {
         actual.scheme == expected.scheme && actual.host == expected.host;
     final samePath = actual.path == expected.path;
     debugPrint(
-      '[xviewer][flutter] Callback parse details: scheme=${actual.scheme}, host=${actual.host}, path=${actual.path}, code=${actual.queryParameters['code']}, state=${actual.queryParameters['state']}, error=${actual.queryParameters['error']}',
+      '[xviewer][flutter] Callback parse details: actualScheme=${actual.scheme}, actualHost=${actual.host}, actualPath=${actual.path}, expectedScheme=${expected.scheme}, expectedHost=${expected.host}, expectedPath=${expected.path}, code=${actual.queryParameters['code']}, state=${actual.queryParameters['state']}, error=${actual.queryParameters['error']}',
     );
     if (!sameAuthority || !samePath) {
       debugPrint(

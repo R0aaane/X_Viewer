@@ -16,6 +16,8 @@ class SavedMediaRecord {
     required this.createdAt,
     required this.savedAt,
     required this.saveLocationType,
+    this.favorite = false,
+    this.tags = const <String>[],
     this.galleryContentUri,
     this.galleryDisplayName,
   });
@@ -34,8 +36,52 @@ class SavedMediaRecord {
   final DateTime createdAt;
   final DateTime savedAt;
   final SaveLocationType saveLocationType;
+  final bool favorite;
+  final List<String> tags;
   final String? galleryContentUri;
   final String? galleryDisplayName;
+
+  SavedMediaRecord copyWith({
+    String? recordId,
+    String? postId,
+    String? mediaKey,
+    String? authorName,
+    String? authorUsername,
+    String? text,
+    String? imageUrl,
+    String? sourceImageUrl,
+    String? localSavedPath,
+    String? previewFilePath,
+    String? originalPostUrl,
+    DateTime? createdAt,
+    DateTime? savedAt,
+    SaveLocationType? saveLocationType,
+    bool? favorite,
+    List<String>? tags,
+    String? galleryContentUri,
+    String? galleryDisplayName,
+  }) {
+    return SavedMediaRecord(
+      recordId: recordId ?? this.recordId,
+      postId: postId ?? this.postId,
+      mediaKey: mediaKey ?? this.mediaKey,
+      authorName: authorName ?? this.authorName,
+      authorUsername: authorUsername ?? this.authorUsername,
+      text: text ?? this.text,
+      imageUrl: imageUrl ?? this.imageUrl,
+      sourceImageUrl: sourceImageUrl ?? this.sourceImageUrl,
+      localSavedPath: localSavedPath ?? this.localSavedPath,
+      previewFilePath: previewFilePath ?? this.previewFilePath,
+      originalPostUrl: originalPostUrl ?? this.originalPostUrl,
+      createdAt: createdAt ?? this.createdAt,
+      savedAt: savedAt ?? this.savedAt,
+      saveLocationType: saveLocationType ?? this.saveLocationType,
+      favorite: favorite ?? this.favorite,
+      tags: List.unmodifiable(tags ?? this.tags),
+      galleryContentUri: galleryContentUri ?? this.galleryContentUri,
+      galleryDisplayName: galleryDisplayName ?? this.galleryDisplayName,
+    );
+  }
 
   Map<String, dynamic> toJson() {
     return {
@@ -53,6 +99,8 @@ class SavedMediaRecord {
       'createdAt': createdAt.toIso8601String(),
       'savedAt': savedAt.toIso8601String(),
       'saveLocationType': saveLocationType.name,
+      'favorite': favorite,
+      'tags': tags,
       'galleryContentUri': galleryContentUri,
       'galleryDisplayName': galleryDisplayName,
     };
@@ -79,8 +127,25 @@ class SavedMediaRecord {
       saveLocationType: SaveLocationType.values.byName(
         json['saveLocationType'] as String? ?? SaveLocationType.appPrivate.name,
       ),
+      favorite: json['favorite'] as bool? ?? false,
+      tags: _parseTags(json['tags']),
       galleryContentUri: json['galleryContentUri'] as String?,
       galleryDisplayName: json['galleryDisplayName'] as String?,
     );
+  }
+
+  static List<String> _parseTags(Object? rawTags) {
+    if (rawTags is! List) {
+      return const <String>[];
+    }
+
+    final normalized = rawTags
+        .map((tag) => tag?.toString().trim() ?? '')
+        .where((tag) => tag.isNotEmpty)
+        .map((tag) => tag.toLowerCase())
+        .toSet()
+        .toList()
+      ..sort();
+    return List.unmodifiable(normalized);
   }
 }

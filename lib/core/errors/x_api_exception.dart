@@ -38,6 +38,15 @@ class XApiException implements Exception {
     );
   }
 
+  factory XApiException.serviceUnavailable([Object? details]) {
+    return XApiException(
+      'X API gateway reached, but upstream/service unavailable. billing/project/app status may be involved.',
+      statusCode: 503,
+      code: 'service_unavailable',
+      details: details,
+    );
+  }
+
   factory XApiException.invalidResponse([Object? details]) {
     return XApiException(
       'X API returned an invalid response.',

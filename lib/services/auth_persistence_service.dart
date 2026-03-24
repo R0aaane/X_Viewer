@@ -1,9 +1,10 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../core/errors/app_exception.dart';
 import '../core/constants/storage_keys.dart';
+import '../core/errors/app_exception.dart';
 import '../domain/models/auth_session.dart';
 import '../domain/models/oauth_token_bundle.dart';
 import 'secure_token_storage_service.dart';
@@ -20,6 +21,9 @@ class AuthPersistenceService {
       );
     }
 
+    debugPrint(
+      '[xviewer][flutter] Persisting auth session: key=${StorageKeys.authSession} userId=${session.userId} username=${session.username} hasAccessToken=${session.hasAccessToken} hasRefreshToken=${(session.refreshToken ?? '').isNotEmpty}',
+    );
     final prefs = await SharedPreferences.getInstance();
     await _secureTokenStorageService.saveTokens(
       OAuthTokenBundle(
@@ -27,6 +31,12 @@ class AuthPersistenceService {
         refreshToken: session.refreshToken,
         expiresAt: session.expiresAt,
       ),
+    );
+    debugPrint(
+      '[xviewer][flutter] Access token saved successfully for userId=${session.userId}',
+    );
+    debugPrint(
+      '[xviewer][flutter] Refresh token saved successfully: hasRefreshToken=${(session.refreshToken ?? '').isNotEmpty}',
     );
     await prefs.setString(
       StorageKeys.authSession,
@@ -40,11 +50,17 @@ class AuthPersistenceService {
             .toJson(),
       ),
     );
+    debugPrint(
+      '[xviewer][flutter] Auth session metadata saved: key=${StorageKeys.authSession}',
+    );
   }
 
   Future<AuthSession?> getSession() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(StorageKeys.authSession);
+    debugPrint(
+      '[xviewer][flutter] Reading auth session: key=${StorageKeys.authSession} found=${(raw ?? '').isNotEmpty}',
+    );
     if (raw == null || raw.isEmpty) {
       await _secureTokenStorageService.clearTokens();
       return null;
@@ -64,15 +80,22 @@ class AuthPersistenceService {
           session.displayName.isEmpty ||
           tokens == null ||
           !tokens.hasAccessToken) {
+        debugPrint(
+          '[xviewer][flutter] Stored auth session was incomplete. Clearing persisted auth state.',
+        );
         await clearSession();
         return null;
       }
 
-      return session.copyWith(
+      final restoredSession = session.copyWith(
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
         expiresAt: tokens.expiresAt,
       );
+      debugPrint(
+        '[xviewer][flutter] Restored auth session successfully: userId=${restoredSession.userId} username=${restoredSession.username} hasAccessToken=${restoredSession.hasAccessToken}',
+      );
+      return restoredSession;
     } on FormatException {
       await clearSession();
       return null;
@@ -81,6 +104,9 @@ class AuthPersistenceService {
 
   Future<void> clearSession() async {
     final prefs = await SharedPreferences.getInstance();
+    debugPrint(
+      '[xviewer][flutter] Clearing persisted auth session: key=${StorageKeys.authSession}',
+    );
     await prefs.remove(StorageKeys.authSession);
     await _secureTokenStorageService.clearTokens();
   }

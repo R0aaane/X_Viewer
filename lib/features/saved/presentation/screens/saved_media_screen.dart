@@ -1,23 +1,52 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/app_routes.dart';
-import '../../../../domain/models/save_location_type.dart';
-import '../../../../core/utils/date_formatter.dart';
 import '../../../../services/service_providers.dart';
 import '../../../../widgets/async_value_view.dart';
 import '../../../../widgets/section_empty_view.dart';
+import '../models/saved_media_layout.dart';
 import '../providers/saved_media_controller.dart';
+import '../widgets/saved_media_card.dart';
+import '../widgets/saved_media_filter_bar.dart';
 
-class SavedMediaScreen extends ConsumerWidget {
+class SavedMediaScreen extends ConsumerStatefulWidget {
   const SavedMediaScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SavedMediaScreen> createState() => _SavedMediaScreenState();
+}
+
+class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
+  late final TextEditingController _tagQueryController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tagQueryController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _tagQueryController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final savedState = ref.watch(savedMediaControllerProvider);
+    final filter = ref.watch(savedMediaFilterProvider);
+    final authors = ref.watch(savedMediaAuthorsProvider);
+    final tags = ref.watch(savedMediaTagsProvider);
+    final filteredRecords = ref.watch(savedMediaFilteredRecordsProvider);
+
+    if (_tagQueryController.text != filter.tagQuery) {
+      _tagQueryController.value = TextEditingValue(
+        text: filter.tagQuery,
+        selection: TextSelection.collapsed(offset: filter.tagQuery.length),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -65,6 +94,24 @@ class SavedMediaScreen extends ConsumerWidget {
               );
             },
           ),
+          SavedMediaFilterBar(
+            filter: filter,
+            authors: authors,
+            suggestedTags: tags,
+            tagQueryController: _tagQueryController,
+            onSelectAuthor: (value) {
+              ref.read(savedMediaFilterProvider.notifier).setAuthor(value);
+            },
+            onToggleFavoritesOnly: () {
+              ref.read(savedMediaFilterProvider.notifier).toggleFavoritesOnly();
+            },
+            onTagQueryChanged: (value) {
+              ref.read(savedMediaFilterProvider.notifier).setTagQuery(value);
+            },
+            onClearFilters: () {
+              ref.read(savedMediaFilterProvider.notifier).clear();
+            },
+          ),
           Expanded(
             child: AsyncValueView(
               value: savedState,
@@ -77,178 +124,66 @@ class SavedMediaScreen extends ConsumerWidget {
                   );
                 }
 
-                return ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemBuilder: (context, index) {
-                    final record = records[index];
-                    final previewFile = File(record.previewFilePath);
+                if (filteredRecords.isEmpty) {
+                  return const SectionEmptyView(
+                    title: 'No matching items',
+                    message: 'Try clearing the author, favorites, or tag filters.',
+                  );
+                }
 
-                    return Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: SizedBox(
-                                width: 96,
-                                height: 96,
-                                child: previewFile.existsSync()
-                                    ? Image.file(previewFile, fit: BoxFit.cover)
-                                    : const ColoredBox(
-                                        color: Color(0xFFE5E7EB),
-                                        child: Icon(
-                                          Icons.image_not_supported_outlined,
-                                        ),
-                                      ),
-                              ),
+                return LayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = constraints.maxWidth.isFinite
+                        ? constraints.maxWidth
+                        : MediaQuery.sizeOf(context).width;
+                    final layout = SavedMediaLayout.fromWidth(width);
+
+                    if (layout.mode == SavedMediaLayoutMode.list) {
+                      return ListView.separated(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: filteredRecords.length,
+                        separatorBuilder: (context, index) =>
+                            const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final record = filteredRecords[index];
+                          return SavedMediaCard(
+                            record: record,
+                            isGrid: false,
+                            onOpen: () => context.push(
+                              AppRoutes.savedDetailPath(record.recordId),
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    record.authorName,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleMedium,
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text('@${record.authorUsername}'),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Saved at: ${DateFormatter.shortDateTime(record.savedAt)}',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall,
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    record.saveLocationType ==
-                                            SaveLocationType.gallery
-                                        ? 'Location: Gallery'
-                                        : 'Location: App storage',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall,
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    record.localSavedPath,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall,
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      FilledButton.tonalIcon(
-                                        onPressed: () async {
-                                          try {
-                                            await ref
-                                                .read(
-                                                  linkLauncherServiceProvider,
-                                                )
-                                                .openExternal(
-                                                  record.originalPostUrl,
-                                                );
-                                          } catch (error) {
-                                            if (context.mounted) {
-                                              ScaffoldMessenger.of(
-                                                context,
-                                              ).showSnackBar(
-                                                SnackBar(
-                                                  content: Text(
-                                                    error.toString(),
-                                                  ),
-                                                ),
-                                              );
-                                            }
-                                          }
-                                        },
-                                        icon: const Icon(
-                                          Icons.open_in_new_rounded,
-                                        ),
-                                        label: const Text('Open post'),
-                                      ),
-                                      if (record.saveLocationType ==
-                                              SaveLocationType.gallery &&
-                                          (record
-                                                  .galleryContentUri
-                                                  ?.isNotEmpty ??
-                                              false))
-                                        FilledButton.tonalIcon(
-                                          onPressed: () async {
-                                            try {
-                                              await ref
-                                                  .read(
-                                                    savedMediaControllerProvider
-                                                        .notifier,
-                                                  )
-                                                  .openGalleryApp();
-                                            } catch (error) {
-                                              if (context.mounted) {
-                                                ScaffoldMessenger.of(
-                                                  context,
-                                                ).showSnackBar(
-                                                  SnackBar(
-                                                    content: Text(
-                                                      error.toString(),
-                                                    ),
-                                                  ),
-                                                );
-                                              }
-                                            }
-                                          },
-                                          icon: const Icon(
-                                            Icons.photo_library_outlined,
-                                          ),
-                                          label: const Text('Gallery'),
-                                        ),
-                                      FilledButton.tonalIcon(
-                                        onPressed: () async {
-                                          await ref
-                                              .read(
-                                                savedMediaControllerProvider
-                                                    .notifier,
-                                              )
-                                              .deleteRecord(record);
-                                          if (context.mounted) {
-                                            ScaffoldMessenger.of(
-                                              context,
-                                            ).showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                  'Saved record removed',
-                                                ),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                        icon: const Icon(
-                                          Icons.delete_outline_rounded,
-                                        ),
-                                        label: const Text('Delete'),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+                            onToggleFavorite: () => _toggleFavorite(record.recordId),
+                            onOpenPost: () => _openPost(record.originalPostUrl),
+                            onDelete: () => _deleteRecord(record.recordId),
+                          );
+                        },
+                      );
+                    }
+
+                    return GridView.builder(
+                      padding: const EdgeInsets.all(16),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: layout.columns,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        childAspectRatio: layout.childAspectRatio,
                       ),
+                      itemCount: filteredRecords.length,
+                      itemBuilder: (context, index) {
+                        final record = filteredRecords[index];
+                        return SavedMediaCard(
+                          record: record,
+                          isGrid: true,
+                          onOpen: () => context.push(
+                            AppRoutes.savedDetailPath(record.recordId),
+                          ),
+                          onToggleFavorite: () => _toggleFavorite(record.recordId),
+                          onOpenPost: () => _openPost(record.originalPostUrl),
+                          onDelete: () => _deleteRecord(record.recordId),
+                        );
+                      },
                     );
                   },
-                  separatorBuilder: (context, index) =>
-                      const SizedBox(height: 12),
-                  itemCount: records.length,
                 );
               },
             ),
@@ -256,5 +191,35 @@ class SavedMediaScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _toggleFavorite(String recordId) async {
+    await ref.read(savedMediaControllerProvider.notifier).toggleFavorite(recordId);
+  }
+
+  Future<void> _deleteRecord(String recordId) async {
+    final record = ref.read(savedMediaRecordProvider(recordId));
+    if (record == null) {
+      return;
+    }
+
+    await ref.read(savedMediaControllerProvider.notifier).deleteRecord(record);
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Saved record removed')));
+    }
+  }
+
+  Future<void> _openPost(String url) async {
+    try {
+      await ref.read(linkLauncherServiceProvider).openExternal(url);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
   }
 }

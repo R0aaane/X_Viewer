@@ -12,7 +12,6 @@ class XTimelineAdapter {
   TimelinePage fromApiResponse(XApiTimelineResponse response) {
     final usersById = _includesMapper.usersById(response.includes);
     final mediaByKey = _includesMapper.mediaByKey(response.includes);
-    final tweetsById = _includesMapper.tweetsById(response.includes);
 
     final posts = response.data
         .map(
@@ -20,7 +19,6 @@ class XTimelineAdapter {
             tweet: tweet,
             usersById: usersById,
             mediaByKey: mediaByKey,
-            tweetsById: tweetsById,
           ),
         )
         .whereType<MediaPost>()
@@ -28,8 +26,8 @@ class XTimelineAdapter {
 
     return TimelinePage(
       posts: posts,
+      newestId: response.newestId,
       nextCursor: response.nextToken,
-      previousCursor: response.previousToken,
       resultCount: response.resultCount,
     );
   }
@@ -63,71 +61,28 @@ class XTimelineAdapter {
     required Map<String, dynamic> tweet,
     required Map<String, Map<String, dynamic>> usersById,
     required Map<String, Map<String, dynamic>> mediaByKey,
-    required Map<String, Map<String, dynamic>> tweetsById,
   }) {
-    var sourceTweet = tweet;
-    var sourceAuthor = usersById[_asString(tweet['author_id'])];
-    var images = _extractApiImages(tweet, mediaByKey);
-
-    if (images.isEmpty) {
-      final referencedTweet = _resolveReferencedTweet(tweet, tweetsById);
-      if (referencedTweet != null) {
-        final referencedImages = _extractApiImages(referencedTweet, mediaByKey);
-        if (referencedImages.isNotEmpty) {
-          sourceTweet = referencedTweet;
-          sourceAuthor = usersById[_asString(referencedTweet['author_id'])];
-          images = referencedImages;
-        }
-      }
-    }
-
+    final images = _extractApiImages(tweet, mediaByKey);
     if (images.isEmpty) {
       return null;
     }
 
+    final sourceAuthor = usersById[_asString(tweet['author_id'])];
     final authorUsername = _asString(
       sourceAuthor?['username'],
       fallback: 'unknown_user',
     );
-    final postId = _asString(sourceTweet['id']);
+    final postId = _asString(tweet['id']);
 
     return MediaPost(
       postId: postId,
       authorName: _asString(sourceAuthor?['name'], fallback: 'Unknown'),
       authorUsername: authorUsername,
-      text: _extractText(sourceTweet),
+      text: _extractText(tweet),
       images: images,
       originalPostUrl: 'https://x.com/$authorUsername/status/$postId',
-      createdAt: _parseCreatedAt(sourceTweet['created_at']),
+      createdAt: _parseCreatedAt(tweet['created_at']),
     );
-  }
-
-  Map<String, dynamic>? _resolveReferencedTweet(
-    Map<String, dynamic> tweet,
-    Map<String, Map<String, dynamic>> tweetsById,
-  ) {
-    final references = (tweet['referenced_tweets'] as List<dynamic>? ?? const [])
-        .whereType<Map<String, dynamic>>();
-
-    for (final reference in references) {
-      final type = reference['type'] as String?;
-      if (type != 'retweeted' && type != 'quoted') {
-        continue;
-      }
-
-      final tweetId = reference['id'] as String?;
-      if (tweetId == null || tweetId.isEmpty) {
-        continue;
-      }
-
-      final referencedTweet = tweetsById[tweetId];
-      if (referencedTweet != null) {
-        // TODO(phase3): consider nested referenced_tweets chains if needed.
-        return referencedTweet;
-      }
-    }
-
-    return null;
   }
 
   List<PostImage> _extractApiImages(
@@ -175,8 +130,8 @@ class XTimelineAdapter {
   }
 
   String _extractText(Map<String, dynamic> json) {
-    final noteTweet = json['note_tweet'] as Map<String, dynamic>?;
-    return _asString(noteTweet?['text'] ?? json['text']);
+    // TODO(api-usage): avoid note_tweet fetch until the detail UX truly requires it.
+    return _asString(json['text']);
   }
 
   DateTime _parseCreatedAt(Object? value) {

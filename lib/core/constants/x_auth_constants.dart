@@ -1,8 +1,15 @@
+import 'x_api_constants.dart';
+
 abstract final class XAuthConstants {
-  static const authorizationHost = 'twitter.com';
+  static const authorizationHost = 'x.com';
   static const authorizationPath = '/i/oauth2/authorize';
-  static const tokenEndpoint = 'https://api.x.com/2/oauth2/token';
-  static const currentUserEndpoint = 'https://api.x.com/2/users/me';
+  static const tokenEndpoint = '${XApiConstants.primaryV2BaseUrl}/oauth2/token';
+  static const fallbackTokenEndpoint =
+      '${XApiConstants.fallbackV2BaseUrl}/oauth2/token';
+  static const currentUserEndpoint =
+      '${XApiConstants.primaryV2BaseUrl}/users/me';
+  static const fallbackCurrentUserEndpoint =
+      '${XApiConstants.fallbackV2BaseUrl}/users/me';
   static const defaultClientId = String.fromEnvironment(
     'X_CLIENT_ID',
     defaultValue: 'TODO_SET_X_CLIENT_ID',

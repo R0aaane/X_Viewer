@@ -16,6 +16,18 @@ class SavedMediaRepositoryImpl implements SavedMediaRepository {
   }
 
   @override
+  Future<SavedMediaRecord?> findByRecordId(String recordId) async {
+    final value = _box.get(recordId);
+    if (value == null) {
+      return null;
+    }
+
+    return SavedMediaRecord.fromJson(
+      Map<String, dynamic>.from(value.cast<String, dynamic>()),
+    );
+  }
+
+  @override
   Future<SavedMediaRecord?> findByMediaKey(String mediaKey) async {
     final records = await getAll();
     return records.firstWhereOrNull((record) => record.mediaKey == mediaKey);

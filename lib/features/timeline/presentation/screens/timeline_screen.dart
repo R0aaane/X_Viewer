@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/constants/storage_keys.dart';
 import '../../../../core/constants/app_routes.dart';
 import '../../../../domain/models/media_post.dart';
 import '../../../../domain/models/post_image.dart';
@@ -22,33 +24,109 @@ class TimelineScreen extends ConsumerStatefulWidget {
 }
 
 class _TimelineScreenState extends ConsumerState<TimelineScreen> {
-  late final ScrollController _scrollController;
+  static const double _defaultGridItemExtent = 148;
+  static const double _minGridItemExtent = 112;
+  static const double _maxGridItemExtent = 220;
+
+  double _gridItemExtent = _defaultGridItemExtent;
 
   @override
   void initState() {
     super.initState();
-    _scrollController = ScrollController()..addListener(_onScroll);
+    _loadGridPreferences();
   }
 
-  @override
-  void dispose() {
-    _scrollController
-      ..removeListener(_onScroll)
-      ..dispose();
-    super.dispose();
-  }
-
-  void _onScroll() {
-    if (!_scrollController.hasClients) {
+  Future<void> _loadGridPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storedExtent = prefs.getDouble(StorageKeys.galleryGridItemExtent);
+    if (!mounted || storedExtent == null) {
       return;
     }
 
-    final position = _scrollController.position;
-    if (position.pixels < position.maxScrollExtent - 320) {
+    setState(() {
+      _gridItemExtent = _clampGridItemExtent(storedExtent);
+    });
+  }
+
+  Future<void> _setGridItemExtent(double value) async {
+    final nextValue = _clampGridItemExtent(value);
+    if (!mounted) {
       return;
     }
 
-    ref.read(timelineControllerProvider.notifier).loadNextPage();
+    setState(() {
+      _gridItemExtent = nextValue;
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(StorageKeys.galleryGridItemExtent, nextValue);
+  }
+
+  double _clampGridItemExtent(double value) {
+    return value.clamp(_minGridItemExtent, _maxGridItemExtent).toDouble();
+  }
+
+  String _gridSizeLabel(double value) {
+    if (value <= 132) {
+      return 'Small';
+    }
+    if (value >= 188) {
+      return 'Large';
+    }
+    return 'Medium';
+  }
+
+  Future<void> _showGridSizeDialog() async {
+    var draftValue = _gridItemExtent;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Display size'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${_gridSizeLabel(draftValue)} (${draftValue.round()} px)'),
+                  const SizedBox(height: 12),
+                  Slider(
+                    value: draftValue,
+                    min: _minGridItemExtent,
+                    max: _maxGridItemExtent,
+                    divisions:
+                        (_maxGridItemExtent - _minGridItemExtent).round(),
+                    label: _gridSizeLabel(draftValue),
+                    onChanged: (value) {
+                      setDialogState(() {
+                        draftValue = value;
+                      });
+                      _setGridItemExtent(value);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    setDialogState(() {
+                      draftValue = _defaultGridItemExtent;
+                    });
+                    _setGridItemExtent(_defaultGridItemExtent);
+                  },
+                  child: const Text('Reset'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -63,6 +141,11 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       appBar: AppBar(
         title: const Text('Timeline Images'),
         actions: [
+          IconButton(
+            onPressed: _showGridSizeDialog,
+            icon: const Icon(Icons.grid_view_rounded),
+            tooltip: 'Display size',
+          ),
           IconButton(
             onPressed: () => context.go(AppRoutes.saved),
             icon: const Icon(Icons.bookmark_rounded),
@@ -97,92 +180,116 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
           return RefreshIndicator(
             onRefresh: () =>
                 ref.read(timelineControllerProvider.notifier).reload(),
-            child: CustomScrollView(
-              controller: _scrollController,
-              physics: const AlwaysScrollableScrollPhysics(),
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.all(16),
-                  sliver: SliverGrid(
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final availableWidth =
+                    constraints.maxWidth.isFinite
+                        ? constraints.maxWidth
+                        : MediaQuery.sizeOf(context).width;
+                final widthLimitedExtent =
+                    (availableWidth - 32)
+                        .clamp(_minGridItemExtent, _maxGridItemExtent)
+                        .toDouble();
+                final maxExtent = _gridItemExtent
+                    .clamp(_minGridItemExtent, widthLimitedExtent)
+                    .toDouble();
+
+                return CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  slivers: [
+                    if (timeline.isRefreshing)
+                      const SliverToBoxAdapter(
+                        child: LinearProgressIndicator(minHeight: 2),
+                      ),
+                    SliverPadding(
+                      padding: const EdgeInsets.all(16),
+                      sliver: SliverGrid(
+                        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: maxExtent,
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 12,
                           childAspectRatio: 0.62,
                         ),
-                    delegate: SliverChildBuilderDelegate((context, index) {
-                      final entry = items[index];
-                      return PostMediaCard(
-                        post: entry.post,
-                        image: entry.image,
-                        isSaved: savedMediaKeys.contains(entry.image.mediaKey),
-                        onSave: () async {
-                          try {
-                            final result = await ref
-                                .read(savedMediaControllerProvider.notifier)
-                                .saveImage(
-                                  post: entry.post,
-                                  image: entry.image,
-                                );
-                            if (context.mounted) {
-                              final message = switch (result.failureReason) {
-                                SaveFailureReason.duplicate =>
-                                  'This image is already saved',
-                                SaveFailureReason.permissionDenied =>
-                                  'Gallery permission was denied, so the image was kept in app storage',
-                                SaveFailureReason.galleryUnavailable =>
-                                  'Saved in app storage because gallery save was unavailable',
-                                SaveFailureReason.unsupportedPlatform =>
-                                  'Saved in app storage on this platform',
-                                SaveFailureReason.writeFailed =>
-                                  'Gallery save failed, so the image was kept in app storage',
-                                _ =>
-                                  result.message ??
-                                      'Saved to ${result.locationType.name}',
-                              };
-                              ScaffoldMessenger.of(
-                                context,
-                              ).showSnackBar(SnackBar(content: Text(message)));
-                            }
-                          } catch (error) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Save failed: $error')),
-                              );
-                            }
-                          }
+                        delegate: SliverChildBuilderDelegate((context, index) {
+                          final entry = items[index];
+                          return PostMediaCard(
+                            post: entry.post,
+                            image: entry.image,
+                            isSaved: savedMediaKeys.contains(
+                              entry.image.mediaKey,
+                            ),
+                            onSave: () async {
+                              try {
+                                final result = await ref
+                                    .read(savedMediaControllerProvider.notifier)
+                                    .saveImage(
+                                      post: entry.post,
+                                      image: entry.image,
+                                    );
+                                if (context.mounted) {
+                                  final message = switch (result.failureReason) {
+                                    SaveFailureReason.duplicate =>
+                                      'This image is already saved',
+                                    SaveFailureReason.permissionDenied =>
+                                      'Gallery permission was denied, so the image was kept in app storage',
+                                    SaveFailureReason.galleryUnavailable =>
+                                      'Saved in app storage because gallery save was unavailable',
+                                    SaveFailureReason.unsupportedPlatform =>
+                                      'Saved in app storage on this platform',
+                                    SaveFailureReason.writeFailed =>
+                                      'Gallery save failed, so the image was kept in app storage',
+                                    _ =>
+                                      result.message ??
+                                          'Saved to ${result.locationType.name}',
+                                  };
+                                  ScaffoldMessenger.of(
+                                    context,
+                                  ).showSnackBar(
+                                    SnackBar(content: Text(message)),
+                                  );
+                                }
+                              } catch (error) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Save failed: $error'),
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                            onOpenPost: () async {
+                              try {
+                                await ref
+                                    .read(linkLauncherServiceProvider)
+                                    .openExternal(entry.post.originalPostUrl);
+                              } catch (error) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text(error.toString())),
+                                  );
+                                }
+                              }
+                            },
+                          );
+                        }, childCount: items.length),
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: _TimelineFooter(
+                        isLoadingMore: timeline.isLoadingMore,
+                        hasMore: timeline.hasMore,
+                        errorMessage: timeline.errorMessage,
+                        onLoadMore: () {
+                          ref
+                              .read(timelineControllerProvider.notifier)
+                              .loadNextPage();
                         },
-                        onOpenPost: () async {
-                          try {
-                            await ref
-                                .read(linkLauncherServiceProvider)
-                                .openExternal(entry.post.originalPostUrl);
-                          } catch (error) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text(error.toString())),
-                              );
-                            }
-                          }
-                        },
-                      );
-                    }, childCount: items.length),
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _TimelineFooter(
-                    isLoadingMore: timeline.isLoadingMore,
-                    hasMore: timeline.hasMore,
-                    errorMessage: timeline.errorMessage,
-                    onRetry: () {
-                      ref
-                          .read(timelineControllerProvider.notifier)
-                          .loadNextPage();
-                    },
-                  ),
-                ),
-              ],
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
           );
         },
@@ -212,13 +319,13 @@ class _TimelineFooter extends StatelessWidget {
     required this.isLoadingMore,
     required this.hasMore,
     required this.errorMessage,
-    required this.onRetry,
+    required this.onLoadMore,
   });
 
   final bool isLoadingMore;
   final bool hasMore;
   final String? errorMessage;
-  final VoidCallback onRetry;
+  final VoidCallback onLoadMore;
 
   @override
   Widget build(BuildContext context) {
@@ -246,7 +353,7 @@ class _TimelineFooter extends StatelessWidget {
               Text(errorMessage!, textAlign: TextAlign.center),
               const SizedBox(height: 12),
               FilledButton(
-                onPressed: onRetry,
+                onPressed: onLoadMore,
                 child: const Text('Retry load more'),
               ),
             ],
@@ -262,6 +369,14 @@ class _TimelineFooter extends StatelessWidget {
       );
     }
 
-    return const SizedBox(height: 24);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      child: Center(
+        child: FilledButton.tonal(
+          onPressed: onLoadMore,
+          child: const Text('Load more'),
+        ),
+      ),
+    );
   }
 }

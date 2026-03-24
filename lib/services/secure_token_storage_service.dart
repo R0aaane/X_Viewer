@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/constants/storage_keys.dart';
@@ -17,10 +18,16 @@ class SecureTokenStorageService {
       key: StorageKeys.oauthTokens,
       value: jsonEncode(tokens.toJson()),
     );
+    debugPrint(
+      '[xviewer][flutter] Token storage write complete: key=${StorageKeys.oauthTokens} accessTokenSaved=${tokens.accessToken.isNotEmpty} refreshTokenSaved=${(tokens.refreshToken ?? '').isNotEmpty}',
+    );
   }
 
   Future<OAuthTokenBundle?> readTokens() async {
     final raw = await _storage.read(key: StorageKeys.oauthTokens);
+    debugPrint(
+      '[xviewer][flutter] Token storage read: key=${StorageKeys.oauthTokens} found=${(raw ?? '').isNotEmpty}',
+    );
     if (raw == null || raw.isEmpty) {
       return null;
     }
@@ -44,6 +51,9 @@ class SecureTokenStorageService {
   }
 
   Future<void> clearTokens() {
+    debugPrint(
+      '[xviewer][flutter] Token storage clear: key=${StorageKeys.oauthTokens}',
+    );
     return _storage.delete(key: StorageKeys.oauthTokens);
   }
 }

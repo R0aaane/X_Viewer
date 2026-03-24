@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -14,10 +15,13 @@ import java.io.IOException
 
 class MainActivity : FlutterActivity() {
     companion object {
-        private const val callbackPrefix = "xviewer://auth/callback"
+        private const val callbackScheme = "xviewer"
+        private const val callbackHost = "auth"
+        private const val callbackPath = "/callback"
         private const val authChannel = "xviewer/auth_callback"
         private const val authEventChannel = "xviewer/auth_callback/events"
         private const val galleryChannel = "xviewer/gallery"
+        private const val logTag = "XviewerOAuth"
     }
 
     private var pendingCallbackUrl: String? = null
@@ -118,14 +122,25 @@ class MainActivity : FlutterActivity() {
 
     private fun handleIntent(intent: Intent?) {
         val callbackUrl = intent?.dataString ?: return
-        if (!callbackUrl.startsWith(callbackPrefix)) {
+        val uri = intent.data
+        Log.d(
+            logTag,
+            "handleIntent callbackUrl=$callbackUrl scheme=${uri?.scheme} host=${uri?.host} path=${uri?.path} state=${uri?.getQueryParameter("state")} hasCode=${!uri?.getQueryParameter("code").isNullOrEmpty()} error=${uri?.getQueryParameter("error")}",
+        )
+        if (uri?.scheme != callbackScheme ||
+            uri.host != callbackHost ||
+            uri.path != callbackPath
+        ) {
+            Log.d(logTag, "Ignoring non-matching callback URL: $callbackUrl")
             return
         }
 
         val sink = eventSink
         if (sink != null) {
+            Log.d(logTag, "Delivering callback URL to EventChannel: $callbackUrl")
             sink.success(callbackUrl)
         } else {
+            Log.d(logTag, "Storing pending callback URL: $callbackUrl")
             pendingCallbackUrl = callbackUrl
         }
     }

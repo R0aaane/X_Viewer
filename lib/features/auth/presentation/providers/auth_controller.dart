@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/config/app_environment.dart';
@@ -11,6 +12,7 @@ import '../../../../domain/models/auth_session.dart';
 import '../../../../domain/models/auth_state.dart';
 import '../../../../domain/repositories/auth_repository.dart';
 import '../../../../services/auth_persistence_service.dart';
+import '../../../../services/oauth_pending_auth_storage_service.dart';
 import '../../../../services/secure_token_storage_service.dart';
 import '../../../../services/service_providers.dart';
 import '../../../../services/x_auth_callback_service.dart';
@@ -24,6 +26,11 @@ final secureTokenStorageServiceProvider = Provider<SecureTokenStorageService>(
 final authPersistenceServiceProvider = Provider<AuthPersistenceService>(
   (ref) => AuthPersistenceService(ref.watch(secureTokenStorageServiceProvider)),
 );
+
+final oauthPendingAuthStorageServiceProvider =
+    Provider<OAuthPendingAuthStorageService>(
+      (ref) => const OAuthPendingAuthStorageService(),
+    );
 
 final appEnvironmentProvider = Provider<AppEnvironment>(
   (ref) => AppEnvironment.fromDefines(),
@@ -57,6 +64,7 @@ final xOAuthServiceProvider = Provider<XOAuthService>(
     authClient: ref.watch(xAuthClientProvider),
     linkLauncherService: ref.watch(linkLauncherServiceProvider),
     callbackService: ref.watch(xAuthCallbackServiceProvider),
+    pendingAuthStorageService: ref.watch(oauthPendingAuthStorageServiceProvider),
   ),
 );
 
@@ -76,7 +84,11 @@ class AuthController extends AsyncNotifier<AuthState> {
   @override
   Future<AuthState> build() async {
     final repository = ref.read(authRepositoryProvider);
-    final session = await repository.getCurrentSession();
+    final restoredFromCallback = await repository.restorePendingSession();
+    final session = restoredFromCallback ?? await repository.getCurrentSession();
+    debugPrint(
+      '[xviewer][flutter] AuthController.build completed: restoredFromCallback=${restoredFromCallback != null} currentIsLoggedIn=${session?.hasAccessToken == true}',
+    );
 
     return AuthState(
       user: _userFromSession(session),
@@ -89,6 +101,7 @@ class AuthController extends AsyncNotifier<AuthState> {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
       final repository = ref.read(authRepositoryProvider);
+      debugPrint('[xviewer][flutter] AuthController.signIn started');
       final user = await repository.signIn();
       final refreshedSession = await repository.getCurrentSession();
       if (refreshedSession == null || !refreshedSession.hasAccessToken) {
@@ -96,6 +109,9 @@ class AuthController extends AsyncNotifier<AuthState> {
           'X login did not produce a persisted access token.',
         );
       }
+      debugPrint(
+        '[xviewer][flutter] AuthController.signIn auth state updated: currentIsLoggedIn=${refreshedSession.hasAccessToken}',
+      );
 
       return AuthState(
         user: user,
@@ -121,6 +137,9 @@ class AuthController extends AsyncNotifier<AuthState> {
     final repo = ref.read(authRepositoryProvider);
     state = const AsyncLoading();
     await repo.signOut();
+    debugPrint(
+      '[xviewer][flutter] AuthController.signOut completed: currentIsLoggedIn=false',
+    );
     state = AsyncData(
       AuthState(
         user: null,

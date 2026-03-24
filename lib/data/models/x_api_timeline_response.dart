@@ -14,6 +14,7 @@ class XApiTimelineResponse {
   final Map<String, dynamic> meta;
   final List<XApiError> errors;
 
+  String? get newestId => meta['newest_id'] as String?;
   String? get nextToken => meta['next_token'] as String?;
   String? get previousToken => meta['previous_token'] as String?;
   int get resultCount => meta['result_count'] as int? ?? data.length;

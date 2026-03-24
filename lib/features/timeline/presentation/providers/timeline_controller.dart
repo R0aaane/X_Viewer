@@ -3,13 +3,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/x_api_constants.dart';
+import '../../../../core/errors/error_message_formatter.dart';
 import '../../../../data/adapters/x_timeline_adapter.dart';
 import '../../../../data/datasources/x_api_client.dart';
 import '../../../../data/mappers/x_timeline_includes_mapper.dart';
 import '../../../../data/repositories/timeline_repository_impl.dart';
+import '../../../../domain/models/auth_session.dart';
 import '../../../../domain/models/media_post.dart';
 import '../../../../domain/models/timeline_page.dart';
 import '../../../../domain/repositories/timeline_repository.dart';
+import '../../../../services/timeline_cache_service.dart';
 import '../../../../services/timeline_media_extractor.dart';
 import '../../../../services/x_timeline_request_builder.dart';
 import '../../../auth/presentation/providers/auth_controller.dart';
@@ -59,6 +62,10 @@ final timelineMediaExtractorProvider = Provider<TimelineMediaExtractor>(
   (ref) => TimelineMediaExtractor(),
 );
 
+final timelineCacheServiceProvider = Provider<TimelineCacheService>(
+  (ref) => const TimelineCacheService(),
+);
+
 final timelineRepositoryProvider = Provider<TimelineRepository>((ref) {
   return TimelineRepositoryImpl(
     ref.watch(xApiClientProvider),
@@ -70,33 +77,86 @@ final timelineRepositoryProvider = Provider<TimelineRepository>((ref) {
 
 final timelineControllerProvider =
     AsyncNotifierProvider<TimelineController, TimelineState>(
-  TimelineController.new,
-);
+      TimelineController.new,
+    );
 
 class TimelineController extends AsyncNotifier<TimelineState> {
   @override
   Future<TimelineState> build() async {
-    final page = await ref.read(timelineRepositoryProvider).fetchTimelinePage();
-    return _toState(page);
+    final session = await _getSession();
+    if (session == null || session.userId.isEmpty) {
+      return TimelineState.empty;
+    }
+
+    final cached = await ref
+        .read(timelineCacheServiceProvider)
+        .read(session.userId);
+    if (cached != null && cached.items.isNotEmpty) {
+      final hydrated = cached.copyWith(
+        isRefreshing: false,
+        isLoadingMore: false,
+        clearErrorMessage: true,
+      );
+
+      if (ref
+          .read(timelineRepositoryProvider)
+          .shouldSync(lastSyncedAt: hydrated.lastSyncedAt)) {
+        Future.microtask(syncIfStale);
+      } else {
+        debugPrint(
+          '[xviewer][flutter] Timeline sync skipped: reason=skipped_cache_fresh lastSyncedAt=${hydrated.lastSyncedAt}',
+        );
+      }
+      return hydrated;
+    }
+
+    final initialPage = await ref.read(timelineRepositoryProvider).fetchInitial();
+    final initialState = _toState(initialPage);
+    await _persistState(initialState);
+    return initialState;
+  }
+
+  Future<void> syncIfStale() async {
+    final current = state.valueOrNull;
+    final repository = ref.read(timelineRepositoryProvider);
+    if (current == null || current.isRefreshing) {
+      return;
+    }
+    if (!repository.shouldSync(lastSyncedAt: current.lastSyncedAt)) {
+      debugPrint(
+        '[xviewer][flutter] Timeline sync skipped: reason=skipped_cache_fresh lastSyncedAt=${current.lastSyncedAt}',
+      );
+      return;
+    }
+
+    await _refreshInternal(manual: false);
   }
 
   Future<void> reload() async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
-      final page = await ref.read(timelineRepositoryProvider).fetchTimelinePage();
-      return _toState(page);
-    });
+    await _refreshInternal(manual: true);
   }
 
   Future<void> loadNextPage() async {
     final current = state.valueOrNull;
-    if (current == null || current.isLoadingMore || !current.hasMore) {
+    final nextToken = current?.nextToken;
+    if (current == null ||
+        current.isLoadingMore ||
+        nextToken == null ||
+        nextToken.isEmpty ||
+        !current.hasMore) {
+      return;
+    }
+    if (current.lastUsedPaginationToken == nextToken) {
+      debugPrint(
+        '[xviewer][flutter] Timeline loadMore skipped: duplicate pagination token token=$nextToken',
+      );
       return;
     }
 
     state = AsyncData(
       current.copyWith(
         isLoadingMore: true,
+        lastUsedPaginationToken: nextToken,
         clearErrorMessage: true,
       ),
     );
@@ -104,24 +164,82 @@ class TimelineController extends AsyncNotifier<TimelineState> {
     try {
       final nextPage = await ref
           .read(timelineRepositoryProvider)
-          .fetchTimelinePage(cursor: current.nextCursor);
-
-      final mergedItems = _mergeUniquePosts(current.items, nextPage.posts);
-      state = AsyncData(
-        current.copyWith(
-          items: mergedItems,
-          nextCursor: nextPage.nextCursor,
-          clearNextCursor: nextPage.nextCursor == null,
-          hasMore: nextPage.hasNextPage,
-          isLoadingMore: false,
-          clearErrorMessage: true,
-        ),
+          .fetchNext(paginationToken: nextToken);
+      final mergedItems = ref
+          .read(timelineRepositoryProvider)
+          .mergeAndDedupePosts(current.items, nextPage.posts);
+      final nextState = current.copyWith(
+        items: mergedItems,
+        lastNewestId: current.lastNewestId ?? nextPage.newestId,
+        nextToken: nextPage.nextCursor,
+        clearNextToken: (nextPage.nextCursor ?? '').isEmpty,
+        hasMore: nextPage.hasNextPage,
+        isLoadingMore: false,
+        lastSyncedAt: DateTime.now(),
+        clearErrorMessage: true,
       );
+      state = AsyncData(nextState);
+      await _persistState(nextState);
     } catch (error) {
       state = AsyncData(
         current.copyWith(
           isLoadingMore: false,
-          errorMessage: error.toString(),
+          errorMessage: formatErrorMessage(error),
+        ),
+      );
+    }
+  }
+
+  Future<void> _refreshInternal({required bool manual}) async {
+    final current = state.valueOrNull ?? TimelineState.empty;
+    if (current.isRefreshing) {
+      return;
+    }
+
+    state = AsyncData(
+      current.copyWith(
+        isRefreshing: true,
+        clearErrorMessage: true,
+      ),
+    );
+
+    try {
+      final TimelinePage page;
+      if (current.items.isEmpty) {
+        page = await ref.read(timelineRepositoryProvider).fetchInitial();
+      } else {
+        page = await ref
+            .read(timelineRepositoryProvider)
+            .fetchNewer(
+              sinceId: current.lastNewestId,
+              requestReason: manual ? 'manual_refresh' : 'stale_sync',
+            );
+      }
+
+      final mergedItems = current.items.isEmpty
+          ? page.posts
+          : ref
+                .read(timelineRepositoryProvider)
+                .mergeAndDedupePosts(page.posts, current.items);
+      final nextState = current.copyWith(
+        items: mergedItems,
+        lastNewestId: page.newestId ?? current.lastNewestId,
+        nextToken: current.nextToken ?? page.nextCursor,
+        hasMore: (current.nextToken ?? page.nextCursor ?? '').isNotEmpty,
+        isRefreshing: false,
+        lastSyncedAt: DateTime.now(),
+        clearErrorMessage: true,
+      );
+      state = AsyncData(nextState);
+      await _persistState(nextState);
+      debugPrint(
+        '[xviewer][flutter] Timeline sync completed: manual=$manual newItems=${page.posts.length} totalItems=${nextState.items.length}',
+      );
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          isRefreshing: false,
+          errorMessage: formatErrorMessage(error),
         ),
       );
     }
@@ -129,28 +247,29 @@ class TimelineController extends AsyncNotifier<TimelineState> {
 
   TimelineState _toState(TimelinePage page) {
     return TimelineState(
-      items: _mergeUniquePosts(const [], page.posts),
-      nextCursor: page.nextCursor,
-      isLoadingMore: false,
+      items: page.posts,
+      lastNewestId: page.newestId,
+      nextToken: page.nextCursor,
       hasMore: page.hasNextPage,
+      isRefreshing: false,
+      isLoadingMore: false,
+      lastSyncedAt: DateTime.now(),
+      lastUsedPaginationToken: null,
       errorMessage: null,
     );
   }
 
-  List<MediaPost> _mergeUniquePosts(
-    List<MediaPost> current,
-    List<MediaPost> incoming,
-  ) {
-    final byId = <String, MediaPost>{};
-    for (final post in current) {
-      byId[post.postId] = post;
-    }
-    for (final post in incoming) {
-      byId.putIfAbsent(post.postId, () => post);
-    }
+  Future<AuthSession?> _getSession() {
+    return ref.read(authPersistenceServiceProvider).getSession();
+  }
 
-    final merged = byId.values.toList(growable: false);
-    merged.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return merged;
+  Future<void> _persistState(TimelineState state) async {
+    final session = await _getSession();
+    if (session == null || session.userId.isEmpty) {
+      return;
+    }
+    await ref
+        .read(timelineCacheServiceProvider)
+        .write(userId: session.userId, state: state);
   }
 }

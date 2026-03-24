@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -12,9 +13,15 @@ class LoginScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authControllerProvider);
+    debugPrint(
+      '[xviewer][flutter] LoginScreen build: authValueHasData=${authState.hasValue} currentIsLoggedIn=${authState.valueOrNull?.isAuthenticated == true}',
+    );
 
     ref.listen(authControllerProvider, (previous, next) {
       next.whenData((auth) {
+        debugPrint(
+          '[xviewer][flutter] LoginScreen auth listener: currentIsLoggedIn=${auth.isAuthenticated}',
+        );
         if (auth.isAuthenticated && context.mounted) {
           context.go(AppRoutes.timeline);
         }

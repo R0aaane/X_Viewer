@@ -25,6 +25,22 @@ class AuthRepositoryImpl implements AuthRepository {
   }
 
   @override
+  Future<AuthSession?> restorePendingSession() async {
+    final service = _xOAuthService;
+    if (service == null) {
+      return null;
+    }
+
+    final session = await service.restorePendingSignInIfAvailable();
+    if (session == null) {
+      return null;
+    }
+
+    await _persistenceService.saveSession(session);
+    return session;
+  }
+
+  @override
   Future<AppUser?> getCurrentUser() async {
     final session = await _persistenceService.getSession();
     if (session == null) {
