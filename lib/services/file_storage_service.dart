@@ -8,8 +8,11 @@ class FileStorageService {
   Future<String> saveBytes({
     required Uint8List bytes,
     required String fileName,
+    String? accountFolderName,
   }) async {
-    final directory = await _ensureImageDirectory();
+    final directory = await _ensureImageDirectory(
+      accountFolderName: accountFolderName,
+    );
     final filePath = p.join(directory.path, fileName);
     final file = File(filePath);
     await file.writeAsBytes(bytes, flush: true);
@@ -23,14 +26,21 @@ class FileStorageService {
     }
   }
 
-  Future<String> getBaseDirectoryPath() async {
-    final directory = await _ensureImageDirectory();
+  Future<String> getBaseDirectoryPath({String? accountFolderName}) async {
+    final directory = await _ensureImageDirectory(
+      accountFolderName: accountFolderName,
+    );
     return directory.path;
   }
 
-  Future<Directory> _ensureImageDirectory() async {
+  Future<Directory> _ensureImageDirectory({String? accountFolderName}) async {
     final baseDir = await getApplicationDocumentsDirectory();
-    final imageDir = Directory(p.join(baseDir.path, 'saved_images'));
+    final pathSegments = <String>[baseDir.path, 'saved_images'];
+    final normalizedFolderName = accountFolderName?.trim();
+    if (normalizedFolderName != null && normalizedFolderName.isNotEmpty) {
+      pathSegments.add(normalizedFolderName);
+    }
+    final imageDir = Directory(p.joinAll(pathSegments));
     if (!await imageDir.exists()) {
       await imageDir.create(recursive: true);
     }

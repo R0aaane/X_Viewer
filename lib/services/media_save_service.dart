@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/errors/app_exception.dart';
+import '../domain/models/auth_session.dart';
 import '../domain/models/media_post.dart';
 import '../domain/models/post_image.dart';
 import '../domain/models/save_failure_reason.dart';
@@ -35,8 +36,14 @@ class MediaSaveService {
   Future<SaveImageResult> saveImage({
     required MediaPost post,
     required PostImage image,
+    AuthSession? session,
   }) async {
-    final existing = await _repository.findByMediaKey(image.mediaKey);
+    final accountFolderName = _buildAccountFolderName(session);
+    final ownerUserId = session?.userId.trim() ?? '';
+    final existing = await _repository.findByMediaKey(
+      mediaKey: image.mediaKey,
+      ownerUserId: ownerUserId,
+    );
     if (existing != null) {
       return SaveImageResult(
         record: existing,
@@ -75,6 +82,7 @@ class MediaSaveService {
           bytes: downloadedImage.bytes,
           fileName: downloadedImage.fileName,
           mimeType: downloadedImage.mimeType,
+          albumName: _buildGalleryAlbumName(accountFolderName),
         );
       } on SaveImageException catch (error) {
         fallbackReason = error.reason;
@@ -89,12 +97,19 @@ class MediaSaveService {
 
     final previewPath = await _savePreviewCopyOrRollback(
       image: downloadedImage,
+      accountFolderName: accountFolderName,
       galleryContentUri: gallerySave?.contentUri,
     );
     final now = DateTime.now();
 
     final record = SavedMediaRecord(
-      recordId: '${post.postId}_${image.mediaKey}',
+      recordId: _buildRecordId(
+        accountIdentifier: ownerUserId.isNotEmpty
+            ? ownerUserId
+            : accountFolderName,
+        post: post,
+        image: image,
+      ),
       postId: post.postId,
       mediaKey: image.mediaKey,
       authorName: post.authorName,
@@ -110,6 +125,8 @@ class MediaSaveService {
       saveLocationType: gallerySave != null
           ? SaveLocationType.gallery
           : SaveLocationType.appPrivate,
+      ownerUserId: ownerUserId,
+      ownerUsername: session?.username.trim() ?? '',
       galleryContentUri: gallerySave?.contentUri,
       galleryDisplayName: gallerySave?.displayName ?? downloadedImage.fileName,
     );
@@ -148,12 +165,15 @@ class MediaSaveService {
     await _repository.delete(record.recordId);
   }
 
-  Future<String> getStorageDirectoryDescription() async {
-    final privateDir = await _fileStorageService.getBaseDirectoryPath();
+  Future<String> getStorageDirectoryDescription({AuthSession? session}) async {
+    final accountFolderName = _buildAccountFolderName(session);
+    final privateDir = await _fileStorageService.getBaseDirectoryPath(
+      accountFolderName: accountFolderName,
+    );
     if (!_shouldTryGallerySave()) {
       return privateDir;
     }
-    return 'Gallery: Pictures/Xviewer, Preview cache: $privateDir';
+    return 'Gallery: Pictures/${_buildGalleryAlbumName(accountFolderName)}, Preview cache: $privateDir';
   }
 
   Future<void> openGalleryApp() {
@@ -186,19 +206,27 @@ class MediaSaveService {
     }
   }
 
-  Future<String> _savePreviewCopy(DownloadedImage image) {
+  Future<String> _savePreviewCopy(
+    DownloadedImage image, {
+    required String accountFolderName,
+  }) {
     return _fileStorageService.saveBytes(
       bytes: image.bytes,
       fileName: image.fileName,
+      accountFolderName: accountFolderName,
     );
   }
 
   Future<String> _savePreviewCopyOrRollback({
     required DownloadedImage image,
+    required String accountFolderName,
     String? galleryContentUri,
   }) async {
     try {
-      return await _savePreviewCopy(image);
+      return await _savePreviewCopy(
+        image,
+        accountFolderName: accountFolderName,
+      );
     } catch (error) {
       if (galleryContentUri != null && galleryContentUri.isNotEmpty) {
         try {
@@ -221,6 +249,48 @@ class MediaSaveService {
     final baseName = '${post.postId}_${image.mediaKey}';
     final sanitized = baseName.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
     return '$sanitized.jpg';
+  }
+
+  String _buildRecordId({
+    required String accountIdentifier,
+    required MediaPost post,
+    required PostImage image,
+  }) {
+    final rawValue = '${accountIdentifier}_${post.postId}_${image.mediaKey}';
+    return rawValue.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+  }
+
+  String _buildGalleryAlbumName(String accountFolderName) {
+    return 'Xviewer/$accountFolderName';
+  }
+
+  String _buildAccountFolderName(AuthSession? session) {
+    final preferredLabel =
+        _sanitizePathSegment(session?.username) ??
+        _sanitizePathSegment(session?.displayName);
+    final userId = _sanitizePathSegment(session?.userId);
+    if (preferredLabel != null && userId != null) {
+      return '${preferredLabel}_$userId';
+    }
+    if (preferredLabel != null) {
+      return preferredLabel;
+    }
+    if (userId != null) {
+      return userId;
+    }
+    return 'default_account';
+  }
+
+  String? _sanitizePathSegment(String? value) {
+    final sanitized = (value ?? '')
+        .trim()
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    if (sanitized.isEmpty) {
+      return null;
+    }
+    return sanitized;
   }
 }
 

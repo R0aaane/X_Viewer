@@ -11,6 +11,7 @@ import '../../../../services/file_storage_service.dart';
 import '../../../../services/gallery_save_service.dart';
 import '../../../../services/image_download_service.dart';
 import '../../../../services/media_save_service.dart';
+import '../../../auth/presentation/providers/auth_controller.dart';
 import '../models/saved_media_filter_state.dart';
 
 final dioProvider = Provider<Dio>((ref) => Dio());
@@ -115,9 +116,10 @@ class SavedMediaController extends AsyncNotifier<List<SavedMediaRecord>> {
     required MediaPost post,
     required PostImage image,
   }) async {
+    final session = await ref.read(authPersistenceServiceProvider).getSession();
     final result = await ref
         .read(mediaSaveServiceProvider)
-        .saveImage(post: post, image: image);
+        .saveImage(post: post, image: image, session: session);
     state = AsyncData(await ref.read(savedMediaRepositoryProvider).getAll());
     return result;
   }
@@ -174,7 +176,14 @@ class SavedMediaController extends AsyncNotifier<List<SavedMediaRecord>> {
   }
 
   Future<String> getStorageDirectory() {
-    return ref.read(mediaSaveServiceProvider).getStorageDirectoryDescription();
+    return ref
+        .read(authPersistenceServiceProvider)
+        .getSession()
+        .then(
+          (session) => ref
+              .read(mediaSaveServiceProvider)
+              .getStorageDirectoryDescription(session: session),
+        );
   }
 
   Future<void> openGalleryApp() {
