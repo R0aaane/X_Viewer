@@ -7,4 +7,6 @@ abstract final class StorageKeys {
   static const timelineCachePrefix = 'timeline_cache_';
   static const appBackgroundMode = 'app_background_mode';
   static const savedItemsLabel = 'saved_items_label';
+  static const savedMediaPreferredColumnCount =
+      'saved_media_preferred_column_count';
 }

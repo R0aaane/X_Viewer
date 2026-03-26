@@ -736,12 +736,15 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
                         ),
                       if (feed.hasFetched && items.isNotEmpty)
                         SliverToBoxAdapter(
-                          child: _TimelineFooter(
-                            isLoadingMore: feed.isLoadingMore,
-                            hasMore: feed.hasMore,
-                            errorMessage: items.isNotEmpty
-                                ? feed.errorMessage
-                                : null,
+                        child: _TimelineFooter(
+                          isLoadingMore: feed.isLoadingMore,
+                          hasMore: feed.hasMore,
+                          loadingLabel: selectedMode == FeedMode.reposted
+                              ? 'Loading more and skipping non-image reposts if needed...'
+                              : 'Loading more...',
+                          errorMessage: items.isNotEmpty
+                              ? feed.errorMessage
+                              : null,
                             onLoadMore: () {
                               ref
                                   .read(timelineControllerProvider.notifier)
@@ -973,26 +976,28 @@ class _TimelineFooter extends StatelessWidget {
   const _TimelineFooter({
     required this.isLoadingMore,
     required this.hasMore,
+    required this.loadingLabel,
     required this.errorMessage,
     required this.onLoadMore,
   });
 
   final bool isLoadingMore;
   final bool hasMore;
+  final String loadingLabel;
   final String? errorMessage;
   final VoidCallback onLoadMore;
 
   @override
   Widget build(BuildContext context) {
     if (isLoadingMore) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.fromLTRB(16, 8, 16, 24),
         child: Center(
           child: Column(
             children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 12),
-              Text('Loading more...'),
+              const CircularProgressIndicator(),
+              const SizedBox(height: 12),
+              Text(loadingLabel, textAlign: TextAlign.center),
             ],
           ),
         ),

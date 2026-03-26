@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/constants/app_routes.dart';
+import '../../../../core/constants/storage_keys.dart';
 import '../../../../services/service_providers.dart';
+import '../models/saved_media_viewer_context.dart';
 import '../../../settings/presentation/providers/app_preferences_controller.dart';
 import '../../../settings/presentation/widgets/app_preferences_dialog.dart';
 import '../../../../widgets/async_value_view.dart';
 import '../../../../widgets/section_empty_view.dart';
-import '../models/saved_media_layout.dart';
 import '../providers/saved_media_controller.dart';
 import '../widgets/saved_media_card.dart';
 import '../widgets/saved_media_filter_bar.dart';
@@ -21,12 +23,20 @@ class SavedMediaScreen extends ConsumerStatefulWidget {
 }
 
 class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
+  static const int _defaultPreferredColumnCount = 2;
+  static const int _maxPreferredColumnCount = 5;
+  static const double _minTileWidth = 120;
+  static const double _gridSpacing = 8;
+  static const double _gridHorizontalPadding = 32;
+
   late final TextEditingController _tagQueryController;
+  int _preferredColumnCount = _defaultPreferredColumnCount;
 
   @override
   void initState() {
     super.initState();
     _tagQueryController = TextEditingController();
+    _loadPreferredColumnCount();
   }
 
   @override
@@ -40,6 +50,67 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
       context: context,
       builder: (context) => const AppPreferencesDialog(),
     );
+  }
+
+  Future<void> _loadPreferredColumnCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storedValue =
+        prefs.getInt(StorageKeys.savedMediaPreferredColumnCount) ??
+            _defaultPreferredColumnCount;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _preferredColumnCount =
+          storedValue.clamp(1, _maxPreferredColumnCount).toInt();
+    });
+  }
+
+  Future<void> _savePreferredColumnCount(int value) async {
+    final normalized = value.clamp(1, _maxPreferredColumnCount).toInt();
+    if (mounted) {
+      setState(() {
+        _preferredColumnCount = normalized;
+      });
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+      StorageKeys.savedMediaPreferredColumnCount,
+      normalized,
+    );
+  }
+
+  int _computeEffectiveColumnCount(double width) {
+    final availableWidth = (width - _gridHorizontalPadding).clamp(
+      _minTileWidth,
+      double.infinity,
+    );
+    final maxColumnsByWidth =
+        ((availableWidth + _gridSpacing) / (_minTileWidth + _gridSpacing))
+            .floor()
+            .clamp(1, _maxPreferredColumnCount);
+    return _preferredColumnCount < maxColumnsByWidth
+        ? _preferredColumnCount
+        : maxColumnsByWidth;
+  }
+
+  double _computeChildAspectRatio({
+    required int columns,
+  }) {
+    if (columns <= 1) {
+      return 1.18;
+    }
+    if (columns == 2) {
+      return 0.84;
+    }
+    if (columns == 3) {
+      return 0.78;
+    }
+    if (columns == 4) {
+      return 0.72;
+    }
+    return 0.68;
   }
 
   @override
@@ -69,6 +140,34 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
           tooltip: 'Back to timeline',
         ),
         actions: [
+          PopupMenuButton<int>(
+            tooltip: 'Columns',
+            initialValue: _preferredColumnCount,
+            onSelected: _savePreferredColumnCount,
+            itemBuilder: (context) {
+              return List<PopupMenuEntry<int>>.generate(
+                _maxPreferredColumnCount,
+                (index) {
+                  final value = index + 1;
+                  return PopupMenuItem<int>(
+                    value: value,
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.grid_view_rounded,
+                          size: 18,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 10),
+                        Text('$value column${value == 1 ? '' : 's'}'),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+            icon: const Icon(Icons.grid_view_rounded),
+          ),
           IconButton(
             onPressed: () async {
               try {
@@ -153,46 +252,43 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
                     final width = constraints.maxWidth.isFinite
                         ? constraints.maxWidth
                         : MediaQuery.sizeOf(context).width;
-                    final layout = SavedMediaLayout.fromWidth(width);
-
-                    if (layout.mode == SavedMediaLayoutMode.list) {
-                      return ListView.separated(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: filteredRecords.length,
-                        separatorBuilder: (context, index) =>
-                            const SizedBox(height: 12),
-                        itemBuilder: (context, index) {
-                          final record = filteredRecords[index];
-                          return SavedMediaCard(
-                            record: record,
-                            isGrid: false,
-                            onOpen: () => context.push(
-                              AppRoutes.savedDetailPath(record.recordId),
-                            ),
-                            onToggleFavorite: () => _toggleFavorite(record.recordId),
-                            onOpenPost: () => _openPost(record.originalPostUrl),
-                            onDelete: () => _deleteRecord(record.recordId),
-                          );
-                        },
-                      );
-                    }
+                    final effectiveColumnCount =
+                        _computeEffectiveColumnCount(width);
+                    final compactMode = effectiveColumnCount >= 4;
+                    final childAspectRatio = _computeChildAspectRatio(
+                      columns: effectiveColumnCount,
+                    );
 
                     return GridView.builder(
                       padding: const EdgeInsets.all(16),
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: layout.columns,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: layout.childAspectRatio,
+                        crossAxisCount: effectiveColumnCount,
+                        crossAxisSpacing: _gridSpacing,
+                        mainAxisSpacing: _gridSpacing,
+                        childAspectRatio: childAspectRatio,
                       ),
                       itemCount: filteredRecords.length,
                       itemBuilder: (context, index) {
                         final record = filteredRecords[index];
+                        final viewerContext = SavedMediaViewerContext(
+                          recordIds: filteredRecords
+                              .map((entry) => entry.recordId)
+                              .toList(growable: false),
+                          initialIndex: index,
+                          sourceType: _resolveViewerSourceType(),
+                          sourceTitle: _resolveViewerSourceTitle(
+                            savedItemsLabel: savedItemsLabel,
+                            filterAuthor: filter.authorUsername,
+                            tagQuery: filter.tagQuery,
+                          ),
+                        );
                         return SavedMediaCard(
                           record: record,
-                          isGrid: true,
+                          isGrid: effectiveColumnCount > 1,
+                          compactMode: compactMode,
                           onOpen: () => context.push(
                             AppRoutes.savedDetailPath(record.recordId),
+                            extra: viewerContext,
                           ),
                           onToggleFavorite: () => _toggleFavorite(record.recordId),
                           onOpenPost: () => _openPost(record.originalPostUrl),
@@ -238,5 +334,30 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
         ).showSnackBar(SnackBar(content: Text(error.toString())));
       }
     }
+  }
+
+  SavedMediaViewerSourceType _resolveViewerSourceType() {
+    final filter = ref.read(savedMediaFilterProvider);
+    if ((filter.authorUsername ?? '').isNotEmpty) {
+      return SavedMediaViewerSourceType.author;
+    }
+    if (filter.tagQuery.trim().isNotEmpty) {
+      return SavedMediaViewerSourceType.search;
+    }
+    return SavedMediaViewerSourceType.gallery;
+  }
+
+  String _resolveViewerSourceTitle({
+    required String savedItemsLabel,
+    required String? filterAuthor,
+    required String tagQuery,
+  }) {
+    if ((filterAuthor ?? '').isNotEmpty) {
+      return '@$filterAuthor';
+    }
+    if (tagQuery.trim().isNotEmpty) {
+      return 'Search: ${tagQuery.trim()}';
+    }
+    return savedItemsLabel;
   }
 }

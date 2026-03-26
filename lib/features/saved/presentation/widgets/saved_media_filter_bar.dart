@@ -41,26 +41,29 @@ class SavedMediaFilterBar extends StatelessWidget {
             children: [
               SizedBox(
                 width: 220,
-                child: DropdownButtonFormField<String?>(
-                  value: filter.authorUsername,
-                  decoration: const InputDecoration(
-                    labelText: 'Author',
-                    border: OutlineInputBorder(),
-                    isDense: true,
+                child: OutlinedButton.icon(
+                  onPressed: () => _showAuthorPicker(context),
+                  icon: const Icon(Icons.person_search_rounded),
+                  label: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      filter.authorUsername == null
+                          ? 'All authors'
+                          : '@${filter.authorUsername}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('All authors'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 14,
                     ),
-                    ...authors.map(
-                      (author) => DropdownMenuItem<String?>(
-                        value: author,
-                        child: Text('@$author'),
-                      ),
+                    alignment: Alignment.centerLeft,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                  ],
-                  onChanged: onSelectAuthor,
+                  ),
                 ),
               ),
               SizedBox(
@@ -112,4 +115,101 @@ class SavedMediaFilterBar extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _showAuthorPicker(BuildContext context) async {
+    final grouped = groupAuthors(authors);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height * 0.72,
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.people_alt_rounded),
+                  title: const Text('Authors'),
+                  subtitle: const Text('Sorted alphabetically'),
+                  trailing: TextButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      onSelectAuthor(null);
+                    },
+                    child: const Text('All'),
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: grouped.entries.length,
+                    itemBuilder: (context, index) {
+                      final section = grouped.entries.elementAt(index);
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                            color: theme.colorScheme.secondaryContainer,
+                            child: Text(
+                              section.key,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          ...section.value.map((author) {
+                            return ListTile(
+                              dense: true,
+                              leading: const Icon(Icons.person_outline_rounded),
+                              title: Text(
+                                '@$author',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              selected: filter.authorUsername == author,
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                onSelectAuthor(author);
+                              },
+                            );
+                          }),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+Map<String, List<String>> groupAuthors(List<String> authors) {
+  final sorted = [...authors]
+    ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  final grouped = <String, List<String>>{};
+
+  for (final author in sorted) {
+    final key = getAuthorSectionKey(author);
+    grouped.putIfAbsent(key, () => <String>[]).add(author);
+  }
+
+  return grouped;
+}
+
+String getAuthorSectionKey(String name) {
+  final trimmed = name.trim();
+  if (trimmed.isEmpty) {
+    return '#';
+  }
+  final first = trimmed[0].toUpperCase();
+  final isAsciiLetter = RegExp(r'^[A-Z]$').hasMatch(first);
+  return isAsciiLetter ? first : '#';
 }

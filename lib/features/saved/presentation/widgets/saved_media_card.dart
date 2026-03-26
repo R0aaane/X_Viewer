@@ -11,6 +11,7 @@ class SavedMediaCard extends StatelessWidget {
     super.key,
     required this.record,
     required this.isGrid,
+    this.compactMode = false,
     required this.onOpen,
     required this.onToggleFavorite,
     required this.onOpenPost,
@@ -19,6 +20,7 @@ class SavedMediaCard extends StatelessWidget {
 
   final SavedMediaRecord record;
   final bool isGrid;
+  final bool compactMode;
   final VoidCallback onOpen;
   final VoidCallback onToggleFavorite;
   final VoidCallback onOpenPost;
@@ -50,6 +52,7 @@ class SavedMediaCard extends StatelessWidget {
               ? _GridBody(
                   record: record,
                   image: image,
+                  compactMode: compactMode,
                   onToggleFavorite: onToggleFavorite,
                   onOpenPost: onOpenPost,
                 )
@@ -70,72 +73,105 @@ class _GridBody extends StatelessWidget {
   const _GridBody({
     required this.record,
     required this.image,
+    required this.compactMode,
     required this.onToggleFavorite,
     required this.onOpenPost,
   });
 
   final SavedMediaRecord record;
   final Widget image;
+  final bool compactMode;
   final VoidCallback onToggleFavorite;
   final VoidCallback onOpenPost;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Stack(
-          children: [
-            image,
-            Positioned(
-              top: 8,
-              right: 8,
-              child: IconButton.filledTonal(
-                onPressed: onToggleFavorite,
-                icon: Icon(
-                  record.favorite ? Icons.favorite : Icons.favorite_border,
+        Expanded(
+          child: Stack(
+            children: [
+              Positioned.fill(child: image),
+              Positioned(
+                top: 8,
+                right: 8,
+                child: IconButton.filledTonal(
+                  visualDensity: compactMode
+                      ? VisualDensity.compact
+                      : VisualDensity.standard,
+                  constraints: BoxConstraints.tightFor(
+                    width: compactMode ? 34 : 40,
+                    height: compactMode ? 34 : 40,
+                  ),
+                  onPressed: onToggleFavorite,
+                  icon: Icon(
+                    record.favorite ? Icons.favorite : Icons.favorite_border,
+                    size: compactMode ? 18 : 20,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: compactMode ? 8 : 12),
         Text(
           record.authorName,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.titleMedium,
+          style: compactMode
+              ? theme.textTheme.titleSmall
+              : theme.textTheme.titleMedium,
         ),
         Text(
           '@${record.authorUsername}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.bodySmall,
+          style: theme.textTheme.bodySmall,
         ),
-        const SizedBox(height: 8),
-        Text(
-          DateFormatter.shortDateTime(record.savedAt),
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        if (record.tags.isNotEmpty) ...[
+        if (!compactMode) ...[
+          const SizedBox(height: 8),
+          Text(
+            DateFormatter.shortDateTime(record.savedAt),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
+        if (!compactMode && record.tags.isNotEmpty) ...[
           const SizedBox(height: 8),
           Wrap(
             spacing: 6,
             runSpacing: 6,
-            children: record.tags.take(3).map((tag) {
+            children: record.tags.take(2).map((tag) {
               return Chip(
-                label: Text('#$tag'),
+                label: Text(
+                  '#$tag',
+                  overflow: TextOverflow.ellipsis,
+                ),
                 visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               );
             }).toList(growable: false),
           ),
         ],
-        const Spacer(),
+        SizedBox(height: compactMode ? 4 : 8),
         Align(
           alignment: Alignment.centerRight,
           child: IconButton(
+            visualDensity:
+                compactMode ? VisualDensity.compact : VisualDensity.standard,
+            constraints: BoxConstraints.tightFor(
+              width: compactMode ? 32 : 40,
+              height: compactMode ? 32 : 40,
+            ),
+            padding: EdgeInsets.zero,
             onPressed: onOpenPost,
-            icon: const Icon(Icons.open_in_new_rounded),
+            icon: Icon(
+              Icons.open_in_new_rounded,
+              size: compactMode ? 18 : 22,
+            ),
             tooltip: 'Open post',
           ),
         ),

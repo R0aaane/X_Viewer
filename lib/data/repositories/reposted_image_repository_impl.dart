@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../core/errors/x_api_exception.dart';
 import '../../domain/models/auth_session.dart';
 import '../../domain/models/feed_mode.dart';
@@ -11,6 +13,8 @@ import '../adapters/x_timeline_adapter.dart';
 import '../datasources/x_api_client.dart';
 
 class RepostedImageRepositoryImpl implements RepostedImageRepository {
+  static const int _maxEmptyImagePagesPerLoadMore = 5;
+
   RepostedImageRepositoryImpl(
     this._xApiClient,
     this._adapter,
@@ -45,10 +49,9 @@ class RepostedImageRepositoryImpl implements RepostedImageRepository {
 
   @override
   Future<TimelinePage> fetchNext({required String paginationToken}) async {
-    return _fetchTimelinePage(
-      requestType: TimelineRequestType.next,
+    return _fetchNextUntilImagePosts(
+      initialPaginationToken: paginationToken,
       requestReason: 'load_more',
-      paginationToken: paginationToken,
     );
   }
 
@@ -88,17 +91,65 @@ class RepostedImageRepositoryImpl implements RepostedImageRepository {
       sinceId: sinceId,
       paginationToken: paginationToken,
     );
+    final rawCount = response.data.length;
     final page = _adapter.fromApiResponse(
       response,
       sourceType: FeedMode.reposted,
       repostsOnly: true,
     );
-    return TimelinePage(
-      posts: _extractor.onlyImagePosts(page.posts),
+    final imagePosts = _extractor.onlyImagePosts(page.posts);
+    final timelinePage = TimelinePage(
+      posts: imagePosts,
       newestId: page.newestId,
       nextCursor: page.nextCursor,
       resultCount: page.resultCount,
     );
+    debugPrint(
+      '[xviewer][flutter] Reposted fetch: reason=$requestReason type=${requestType.name} paginationToken=$paginationToken sinceId=$sinceId rawCount=$rawCount filteredImageCount=${imagePosts.length} nextToken=${response.nextToken} hasMore=${timelinePage.hasNextPage}',
+    );
+    return timelinePage;
+  }
+
+  Future<TimelinePage> _fetchNextUntilImagePosts({
+    required String initialPaginationToken,
+    required String requestReason,
+  }) async {
+    var paginationToken = initialPaginationToken;
+    TimelinePage? lastPage;
+
+    for (
+      var attempt = 1;
+      attempt <= _maxEmptyImagePagesPerLoadMore;
+      attempt++
+    ) {
+      final page = await _fetchTimelinePage(
+        requestType: TimelineRequestType.next,
+        requestReason: '$requestReason#attempt$attempt',
+        paginationToken: paginationToken,
+      );
+      lastPage = page;
+
+      debugPrint(
+        '[xviewer][flutter] Reposted loadMore scan: attempt=$attempt requestPaginationToken=$paginationToken rawResultCount=${page.resultCount} filteredImageCount=${page.posts.length} nextToken=${page.nextCursor} hasMore=${page.hasNextPage}',
+      );
+
+      if (page.posts.isNotEmpty) {
+        return page;
+      }
+      if (!page.hasNextPage || (page.nextCursor ?? '').isEmpty) {
+        debugPrint(
+          '[xviewer][flutter] Reposted loadMore reached end while skipping empty image pages: attempt=$attempt nextToken=${page.nextCursor} hasMore=${page.hasNextPage}',
+        );
+        return page;
+      }
+
+      paginationToken = page.nextCursor!;
+    }
+
+    debugPrint(
+      '[xviewer][flutter] Reposted loadMore stopped after max empty-image scans: attempts=$_maxEmptyImagePagesPerLoadMore finalNextToken=${lastPage?.nextCursor} finalHasMore=${lastPage?.hasNextPage}',
+    );
+    return lastPage ?? TimelinePage.empty;
   }
 
   void _validateSession(AuthSession? session) {

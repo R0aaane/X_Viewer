@@ -228,6 +228,9 @@ class TimelineController extends AsyncNotifier<TimelineState> {
         clearErrorMessage: true,
         hasFetched: true,
       );
+      debugPrint(
+        '[xviewer][flutter] Feed loadMore completed: mode=${mode.name} requestToken=$nextToken receivedPosts=${nextPage.posts.length} nextToken=${nextPage.nextCursor} hasMore=${nextPage.hasNextPage} totalItems=${nextFeed.items.length}',
+      );
       _updateFeed(mode, nextFeed);
       await _persistCurrentState();
     } catch (error) {

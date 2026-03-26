@@ -3,20 +3,24 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
-import '../../../../core/constants/app_routes.dart';
 import '../../../../core/utils/date_formatter.dart';
 import '../../../../domain/models/save_location_type.dart';
 import '../../../../domain/models/saved_media_record.dart';
 import '../../../../services/service_providers.dart';
 import '../../../../widgets/section_empty_view.dart';
+import '../models/saved_media_viewer_context.dart';
 import '../providers/saved_media_controller.dart';
 
 class SavedMediaDetailScreen extends ConsumerStatefulWidget {
-  const SavedMediaDetailScreen({super.key, required this.recordId});
+  const SavedMediaDetailScreen({
+    super.key,
+    required this.recordId,
+    this.viewerContext,
+  });
 
   final String recordId;
+  final SavedMediaViewerContext? viewerContext;
 
   @override
   ConsumerState<SavedMediaDetailScreen> createState() =>
@@ -26,11 +30,13 @@ class SavedMediaDetailScreen extends ConsumerStatefulWidget {
 class _SavedMediaDetailScreenState
     extends ConsumerState<SavedMediaDetailScreen> {
   late final FocusNode _readerFocusNode;
+  late int _currentIndex;
 
   @override
   void initState() {
     super.initState();
     _readerFocusNode = FocusNode(debugLabel: 'saved-media-reader');
+    _currentIndex = widget.viewerContext?.initialIndex ?? 0;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
@@ -49,10 +55,25 @@ class _SavedMediaDetailScreenState
   Widget build(BuildContext context) {
     final allRecords = ref.watch(savedMediaControllerProvider).valueOrNull ??
         const <SavedMediaRecord>[];
-    final savedFilteredRecords = ref.watch(savedMediaFilteredRecordsProvider);
-    final filteredRecords =
-        savedFilteredRecords.isNotEmpty ? savedFilteredRecords : allRecords;
-    final record = ref.watch(savedMediaRecordProvider(widget.recordId));
+    final recordsById = {
+      for (final record in allRecords) record.recordId: record,
+    };
+    final viewerRecordIds = widget.viewerContext?.recordIds ??
+        <String>[
+          widget.recordId,
+        ];
+    final resolvedRecords = viewerRecordIds
+        .map((id) => recordsById[id])
+        .whereType<SavedMediaRecord>()
+        .toList(growable: false);
+    final fallbackRecord = ref.watch(savedMediaRecordProvider(widget.recordId));
+    final recordList = resolvedRecords.isNotEmpty
+        ? resolvedRecords
+        : (fallbackRecord == null ? const <SavedMediaRecord>[] : [fallbackRecord]);
+    final safeIndex = recordList.isEmpty
+        ? 0
+        : _currentIndex.clamp(0, recordList.length - 1);
+    final record = recordList.isEmpty ? null : recordList[safeIndex];
 
     if (record == null) {
       return Scaffold(
@@ -64,17 +85,10 @@ class _SavedMediaDetailScreenState
       );
     }
 
-    final recordList = filteredRecords.any(
-      (entry) => entry.recordId == record.recordId,
-    )
-        ? filteredRecords
-        : allRecords;
-    final currentIndex = recordList.indexWhere(
-      (entry) => entry.recordId == record.recordId,
-    );
-    final hasPrev = currentIndex > 0;
-    final hasNext = currentIndex >= 0 && currentIndex < recordList.length - 1;
+    final hasPrev = safeIndex > 0;
+    final hasNext = safeIndex < recordList.length - 1;
     final previewFile = File(record.previewFilePath);
+    final sourceTitle = widget.viewerContext?.sourceTitle ?? '';
 
     return Shortcuts(
       shortcuts: <ShortcutActivator, Intent>{
@@ -89,7 +103,7 @@ class _SavedMediaDetailScreenState
           _NavigatePreviousIntent: CallbackAction<_NavigatePreviousIntent>(
             onInvoke: (_) {
               if (_shouldHandleKeyboardNavigation()) {
-                _prev(recordList, currentIndex);
+                _prev(recordList);
               }
               return null;
             },
@@ -97,7 +111,7 @@ class _SavedMediaDetailScreenState
           _NavigateNextIntent: CallbackAction<_NavigateNextIntent>(
             onInvoke: (_) {
               if (_shouldHandleKeyboardNavigation()) {
-                _next(recordList, currentIndex);
+                _next(recordList);
               }
               return null;
             },
@@ -117,6 +131,16 @@ class _SavedMediaDetailScreenState
           child: Scaffold(
             appBar: AppBar(
               title: Text('@${record.authorUsername}'),
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(26),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    '${safeIndex + 1} / ${recordList.length}${sourceTitle.isNotEmpty ? '  •  $sourceTitle' : ''}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ),
               actions: [
                 IconButton(
                   onPressed: () => ref
@@ -142,8 +166,8 @@ class _SavedMediaDetailScreenState
                         previewFile: previewFile,
                         hasPrev: hasPrev,
                         hasNext: hasNext,
-                        onPrev: () => _prev(recordList, currentIndex),
-                        onNext: () => _next(recordList, currentIndex),
+                        onPrev: () => _prev(recordList),
+                        onNext: () => _next(recordList),
                       ),
                       const SizedBox(height: 20),
                       Row(
@@ -346,22 +370,24 @@ class _SavedMediaDetailScreenState
     );
   }
 
-  void _prev(List<SavedMediaRecord> records, int currentIndex) {
-    if (currentIndex <= 0) {
+  void _prev(List<SavedMediaRecord> records) {
+    if (_currentIndex <= 0 || records.isEmpty) {
       return;
     }
 
-    final target = records[currentIndex - 1];
-    context.go(AppRoutes.savedDetailPath(target.recordId));
+    setState(() {
+      _currentIndex -= 1;
+    });
   }
 
-  void _next(List<SavedMediaRecord> records, int currentIndex) {
-    if (currentIndex < 0 || currentIndex >= records.length - 1) {
+  void _next(List<SavedMediaRecord> records) {
+    if (records.isEmpty || _currentIndex >= records.length - 1) {
       return;
     }
 
-    final target = records[currentIndex + 1];
-    context.go(AppRoutes.savedDetailPath(target.recordId));
+    setState(() {
+      _currentIndex += 1;
+    });
   }
 
   bool _shouldHandleKeyboardNavigation() {

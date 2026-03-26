@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../core/constants/app_routes.dart';
 import '../features/auth/presentation/screens/login_screen.dart';
+import '../features/saved/presentation/models/saved_media_viewer_context.dart';
 import '../features/saved/presentation/screens/saved_media_detail_screen.dart';
 import '../features/saved/presentation/screens/saved_media_screen.dart';
 import '../features/timeline/presentation/screens/timeline_screen.dart';
@@ -27,7 +28,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.savedDetail,
         builder: (context, state) {
           final recordId = state.pathParameters['recordId'] ?? '';
-          return SavedMediaDetailScreen(recordId: recordId);
+          return SavedMediaDetailScreen(
+            recordId: recordId,
+            viewerContext: state.extra is SavedMediaViewerContext
+                ? state.extra as SavedMediaViewerContext
+                : null,
+          );
         },
       ),
     ],
