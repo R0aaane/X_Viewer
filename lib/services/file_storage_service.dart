@@ -33,6 +33,43 @@ class FileStorageService {
     return directory.path;
   }
 
+  Future<String> moveFileToDirectory({
+    required String sourcePath,
+    required String fileName,
+    String? accountFolderName,
+  }) async {
+    final sourceFile = File(sourcePath);
+    if (!await sourceFile.exists()) {
+      throw FileSystemException('Source file not found', sourcePath);
+    }
+
+    final directory = await _ensureImageDirectory(
+      accountFolderName: accountFolderName,
+    );
+    final destinationPath = p.join(directory.path, fileName);
+    if (p.normalize(sourceFile.path) == p.normalize(destinationPath)) {
+      return sourceFile.path;
+    }
+
+    final destinationFile = File(destinationPath);
+    if (await destinationFile.exists()) {
+      await sourceFile.delete();
+      return destinationFile.path;
+    }
+
+    try {
+      final moved = await sourceFile.rename(destinationPath);
+      return moved.path;
+    } on FileSystemException {
+      await destinationFile.writeAsBytes(
+        await sourceFile.readAsBytes(),
+        flush: true,
+      );
+      await sourceFile.delete();
+      return destinationFile.path;
+    }
+  }
+
   Future<Directory> _ensureImageDirectory({String? accountFolderName}) async {
     final baseDir = await getApplicationDocumentsDirectory();
     final pathSegments = <String>[baseDir.path, 'saved_images'];

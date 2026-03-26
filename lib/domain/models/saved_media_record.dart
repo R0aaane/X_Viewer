@@ -16,8 +16,6 @@ class SavedMediaRecord {
     required this.createdAt,
     required this.savedAt,
     required this.saveLocationType,
-    this.ownerUserId = '',
-    this.ownerUsername = '',
     this.favorite = false,
     this.tags = const <String>[],
     this.galleryContentUri,
@@ -38,8 +36,6 @@ class SavedMediaRecord {
   final DateTime createdAt;
   final DateTime savedAt;
   final SaveLocationType saveLocationType;
-  final String ownerUserId;
-  final String ownerUsername;
   final bool favorite;
   final List<String> tags;
   final String? galleryContentUri;
@@ -60,8 +56,6 @@ class SavedMediaRecord {
     DateTime? createdAt,
     DateTime? savedAt,
     SaveLocationType? saveLocationType,
-    String? ownerUserId,
-    String? ownerUsername,
     bool? favorite,
     List<String>? tags,
     String? galleryContentUri,
@@ -82,8 +76,6 @@ class SavedMediaRecord {
       createdAt: createdAt ?? this.createdAt,
       savedAt: savedAt ?? this.savedAt,
       saveLocationType: saveLocationType ?? this.saveLocationType,
-      ownerUserId: ownerUserId ?? this.ownerUserId,
-      ownerUsername: ownerUsername ?? this.ownerUsername,
       favorite: favorite ?? this.favorite,
       tags: List.unmodifiable(tags ?? this.tags),
       galleryContentUri: galleryContentUri ?? this.galleryContentUri,
@@ -107,8 +99,6 @@ class SavedMediaRecord {
       'createdAt': createdAt.toIso8601String(),
       'savedAt': savedAt.toIso8601String(),
       'saveLocationType': saveLocationType.name,
-      'ownerUserId': ownerUserId,
-      'ownerUsername': ownerUsername,
       'favorite': favorite,
       'tags': tags,
       'galleryContentUri': galleryContentUri,
@@ -137,8 +127,6 @@ class SavedMediaRecord {
       saveLocationType: SaveLocationType.values.byName(
         json['saveLocationType'] as String? ?? SaveLocationType.appPrivate.name,
       ),
-      ownerUserId: json['ownerUserId'] as String? ?? '',
-      ownerUsername: json['ownerUsername'] as String? ?? '',
       favorite: json['favorite'] as bool? ?? false,
       tags: _parseTags(json['tags']),
       galleryContentUri: json['galleryContentUri'] as String?,

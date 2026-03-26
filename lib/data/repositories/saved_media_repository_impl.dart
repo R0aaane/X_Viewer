@@ -28,21 +28,9 @@ class SavedMediaRepositoryImpl implements SavedMediaRepository {
   }
 
   @override
-  Future<SavedMediaRecord?> findByMediaKey({
-    required String mediaKey,
-    String? ownerUserId,
-  }) async {
+  Future<SavedMediaRecord?> findByMediaKey(String mediaKey) async {
     final records = await getAll();
-    final normalizedOwnerUserId = ownerUserId?.trim() ?? '';
-    return records.firstWhereOrNull((record) {
-      if (record.mediaKey != mediaKey) {
-        return false;
-      }
-      if (normalizedOwnerUserId.isEmpty) {
-        return true;
-      }
-      return record.ownerUserId == normalizedOwnerUserId;
-    });
+    return records.firstWhereOrNull((record) => record.mediaKey == mediaKey);
   }
 
   @override

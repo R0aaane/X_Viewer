@@ -1,10 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/errors/app_exception.dart';
-import '../domain/models/auth_session.dart';
 import '../domain/models/media_post.dart';
 import '../domain/models/post_image.dart';
 import '../domain/models/save_failure_reason.dart';
@@ -36,14 +36,9 @@ class MediaSaveService {
   Future<SaveImageResult> saveImage({
     required MediaPost post,
     required PostImage image,
-    AuthSession? session,
   }) async {
-    final accountFolderName = _buildAccountFolderName(session);
-    final ownerUserId = session?.userId.trim() ?? '';
-    final existing = await _repository.findByMediaKey(
-      mediaKey: image.mediaKey,
-      ownerUserId: ownerUserId,
-    );
+    final accountFolderName = _buildAccountFolderName(post.authorUsername);
+    final existing = await _repository.findByMediaKey(image.mediaKey);
     if (existing != null) {
       return SaveImageResult(
         record: existing,
@@ -103,13 +98,7 @@ class MediaSaveService {
     final now = DateTime.now();
 
     final record = SavedMediaRecord(
-      recordId: _buildRecordId(
-        accountIdentifier: ownerUserId.isNotEmpty
-            ? ownerUserId
-            : accountFolderName,
-        post: post,
-        image: image,
-      ),
+      recordId: '${post.postId}_${image.mediaKey}',
       postId: post.postId,
       mediaKey: image.mediaKey,
       authorName: post.authorName,
@@ -125,8 +114,6 @@ class MediaSaveService {
       saveLocationType: gallerySave != null
           ? SaveLocationType.gallery
           : SaveLocationType.appPrivate,
-      ownerUserId: ownerUserId,
-      ownerUsername: session?.username.trim() ?? '',
       galleryContentUri: gallerySave?.contentUri,
       galleryDisplayName: gallerySave?.displayName ?? downloadedImage.fileName,
     );
@@ -165,15 +152,199 @@ class MediaSaveService {
     await _repository.delete(record.recordId);
   }
 
-  Future<String> getStorageDirectoryDescription({AuthSession? session}) async {
-    final accountFolderName = _buildAccountFolderName(session);
-    final privateDir = await _fileStorageService.getBaseDirectoryPath(
+  Future<void> migrateSavedMediaToAuthorFolders() async {
+    final records = await _repository.getAll();
+    for (final record in records) {
+      try {
+        final migrated = await _migrateRecordToAuthorFolder(record);
+        if (migrated != null) {
+          await _repository.save(migrated);
+        }
+      } catch (error, stackTrace) {
+        debugPrint(
+          '[xviewer][save] Failed to migrate saved media record=${record.recordId}: $error',
+        );
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    }
+  }
+
+  Future<String> getStorageDirectoryDescription() async {
+    final privateRoot = await _fileStorageService.getBaseDirectoryPath();
+    if (!_shouldTryGallerySave()) {
+      return '$privateRoot/<twitter-id>';
+    }
+    return 'Gallery: Pictures/Xviewer/<twitter-id>, '
+        'Preview cache: $privateRoot/<twitter-id>';
+  }
+
+  Future<SavedMediaRecord?> _migrateRecordToAuthorFolder(
+    SavedMediaRecord record,
+  ) async {
+    final accountFolderName = _buildAccountFolderName(record.authorUsername);
+    final previewFileName = _resolvePreviewFileName(record);
+    var nextRecord = record;
+    var changed = false;
+
+    final migratedPreviewPath = await _migratePreviewFile(
+      record: nextRecord,
+      accountFolderName: accountFolderName,
+      fileName: previewFileName,
+    );
+    if (migratedPreviewPath != null &&
+        p.normalize(migratedPreviewPath) !=
+            p.normalize(nextRecord.previewFilePath)) {
+      nextRecord = nextRecord.copyWith(
+        previewFilePath: migratedPreviewPath,
+        localSavedPath:
+            nextRecord.saveLocationType == SaveLocationType.appPrivate
+            ? migratedPreviewPath
+            : nextRecord.localSavedPath,
+      );
+      changed = true;
+    }
+
+    if (_shouldTryGallerySave() &&
+        nextRecord.saveLocationType == SaveLocationType.gallery &&
+        (nextRecord.galleryContentUri?.isNotEmpty ?? false)) {
+      final migratedGalleryRecord = await _migrateGalleryFile(
+        record: nextRecord,
+        accountFolderName: accountFolderName,
+        fallbackFileName: previewFileName,
+      );
+      if (migratedGalleryRecord != null) {
+        nextRecord = migratedGalleryRecord;
+        changed = true;
+      }
+    }
+
+    return changed ? nextRecord : null;
+  }
+
+  Future<String?> _migratePreviewFile({
+    required SavedMediaRecord record,
+    required String accountFolderName,
+    required String fileName,
+  }) async {
+    final sourcePath = await _resolveExistingPrivatePath(record);
+    if (sourcePath == null) {
+      return null;
+    }
+    final targetPath = p.join(
+      await _fileStorageService.getBaseDirectoryPath(
+        accountFolderName: accountFolderName,
+      ),
+      fileName,
+    );
+    if (p.normalize(sourcePath) == p.normalize(targetPath)) {
+      return sourcePath;
+    }
+
+    return _fileStorageService.moveFileToDirectory(
+      sourcePath: sourcePath,
+      fileName: fileName,
       accountFolderName: accountFolderName,
     );
-    if (!_shouldTryGallerySave()) {
-      return privateDir;
+  }
+
+  Future<SavedMediaRecord?> _migrateGalleryFile({
+    required SavedMediaRecord record,
+    required String accountFolderName,
+    required String fallbackFileName,
+  }) async {
+    final targetAlbumName = _buildGalleryAlbumName(accountFolderName);
+    if (_isGalleryPathInTargetAlbum(record.localSavedPath, targetAlbumName)) {
+      return null;
     }
-    return 'Gallery: Pictures/${_buildGalleryAlbumName(accountFolderName)}, Preview cache: $privateDir';
+
+    final previewFile = File(record.previewFilePath);
+    if (!await previewFile.exists()) {
+      return null;
+    }
+
+    final targetFileName =
+        (record.galleryDisplayName ?? '').trim().isNotEmpty
+            ? record.galleryDisplayName!
+            : fallbackFileName;
+    final migratedGallery = await _gallerySaveService.saveImage(
+      bytes: await previewFile.readAsBytes(),
+      fileName: targetFileName,
+      mimeType: _resolveMimeType(targetFileName),
+      albumName: targetAlbumName,
+    );
+
+    final previousGalleryUri = record.galleryContentUri;
+    if ((previousGalleryUri ?? '').isNotEmpty &&
+        previousGalleryUri != migratedGallery.contentUri) {
+      try {
+        await _gallerySaveService.deleteImage(previousGalleryUri!);
+      } catch (_) {
+        debugPrint(
+          '[xviewer][save] Failed to delete old gallery asset during migration: $previousGalleryUri',
+        );
+      }
+    }
+
+    return record.copyWith(
+      localSavedPath: migratedGallery.savedPath,
+      galleryContentUri: migratedGallery.contentUri,
+      galleryDisplayName: migratedGallery.displayName,
+    );
+  }
+
+  Future<String?> _resolveExistingPrivatePath(SavedMediaRecord record) async {
+    final previewFile = File(record.previewFilePath);
+    if (await previewFile.exists()) {
+      return previewFile.path;
+    }
+
+    final localFile = File(record.localSavedPath);
+    if (record.saveLocationType == SaveLocationType.appPrivate &&
+        await localFile.exists()) {
+      return localFile.path;
+    }
+
+    return null;
+  }
+
+  bool _isGalleryPathInTargetAlbum(String savedPath, String albumName) {
+    final normalizedSavedPath = savedPath.replaceAll('\\', '/');
+    final normalizedAlbumName = 'Pictures/$albumName/';
+    return normalizedSavedPath.contains(normalizedAlbumName);
+  }
+
+  String _resolvePreviewFileName(SavedMediaRecord record) {
+    final candidates = <String>[
+      p.basename(record.previewFilePath),
+      p.basename(record.localSavedPath),
+      record.galleryDisplayName ?? '',
+      _buildFileNameFromRecord(record),
+    ];
+    for (final candidate in candidates) {
+      if (candidate.trim().isNotEmpty) {
+        return candidate.trim();
+      }
+    }
+    return '${record.postId}_${record.mediaKey}.jpg';
+  }
+
+  String _buildFileNameFromRecord(SavedMediaRecord record) {
+    final baseName = '${record.postId}_${record.mediaKey}';
+    final sanitized = baseName.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+    return '$sanitized.jpg';
+  }
+
+  String _resolveMimeType(String fileName) {
+    switch (p.extension(fileName).toLowerCase()) {
+      case '.png':
+        return 'image/png';
+      case '.webp':
+        return 'image/webp';
+      case '.gif':
+        return 'image/gif';
+      default:
+        return 'image/jpeg';
+    }
   }
 
   Future<void> openGalleryApp() {
@@ -251,34 +422,12 @@ class MediaSaveService {
     return '$sanitized.jpg';
   }
 
-  String _buildRecordId({
-    required String accountIdentifier,
-    required MediaPost post,
-    required PostImage image,
-  }) {
-    final rawValue = '${accountIdentifier}_${post.postId}_${image.mediaKey}';
-    return rawValue.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
-  }
-
   String _buildGalleryAlbumName(String accountFolderName) {
     return 'Xviewer/$accountFolderName';
   }
 
-  String _buildAccountFolderName(AuthSession? session) {
-    final preferredLabel =
-        _sanitizePathSegment(session?.username) ??
-        _sanitizePathSegment(session?.displayName);
-    final userId = _sanitizePathSegment(session?.userId);
-    if (preferredLabel != null && userId != null) {
-      return '${preferredLabel}_$userId';
-    }
-    if (preferredLabel != null) {
-      return preferredLabel;
-    }
-    if (userId != null) {
-      return userId;
-    }
-    return 'default_account';
+  String _buildAccountFolderName(String authorUsername) {
+    return _sanitizePathSegment(authorUsername) ?? 'unknown_user';
   }
 
   String? _sanitizePathSegment(String? value) {
