@@ -33,6 +33,28 @@ class FileStorageService {
     return directory.path;
   }
 
+  Future<List<File>> listSavedImageFiles() async {
+    final directory = await _ensureImageDirectory();
+    final files = <File>[];
+    await for (final entity in directory.list(recursive: true)) {
+      if (entity is! File) {
+        continue;
+      }
+
+      final extension = p.extension(entity.path).toLowerCase();
+      if (const {
+        '.jpg',
+        '.jpeg',
+        '.png',
+        '.webp',
+        '.gif',
+      }.contains(extension)) {
+        files.add(entity);
+      }
+    }
+    return files;
+  }
+
   Future<String> moveFileToDirectory({
     required String sourcePath,
     required String fileName,

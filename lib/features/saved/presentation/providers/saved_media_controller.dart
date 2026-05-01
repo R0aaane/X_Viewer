@@ -108,7 +108,9 @@ final savedMediaRecordProvider =
 class SavedMediaController extends AsyncNotifier<List<SavedMediaRecord>> {
   @override
   Future<List<SavedMediaRecord>> build() async {
-    await ref.read(mediaSaveServiceProvider).migrateSavedMediaToAuthorFolders();
+    final mediaSaveService = ref.read(mediaSaveServiceProvider);
+    await mediaSaveService.importExistingSavedImageFiles();
+    await mediaSaveService.migrateSavedMediaToAuthorFolders();
     return ref.read(savedMediaRepositoryProvider).getAll();
   }
 

@@ -169,6 +169,48 @@ class MediaSaveService {
     }
   }
 
+  Future<int> importExistingSavedImageFiles() async {
+    final files = await _fileStorageService.listSavedImageFiles();
+    if (files.isEmpty) {
+      return 0;
+    }
+
+    final baseDirectory = p.normalize(
+      await _fileStorageService.getBaseDirectoryPath(),
+    );
+    final existingRecords = await _repository.getAll();
+    final existingRecordIds = existingRecords
+        .map((record) => record.recordId)
+        .toSet();
+    final existingPaths = existingRecords
+        .expand((record) => [record.previewFilePath, record.localSavedPath])
+        .map(p.normalize)
+        .toSet();
+    var importedCount = 0;
+
+    for (final file in files) {
+      final filePath = p.normalize(file.path);
+      if (existingPaths.contains(filePath)) {
+        continue;
+      }
+
+      final record = await _buildImportedRecord(
+        file: file,
+        baseDirectory: baseDirectory,
+        existingRecordIds: existingRecordIds,
+      );
+      await _repository.save(record);
+      existingRecordIds.add(record.recordId);
+      existingPaths.add(filePath);
+      importedCount += 1;
+    }
+
+    if (importedCount > 0) {
+      debugPrint('[xviewer][save] Imported $importedCount existing image files.');
+    }
+    return importedCount;
+  }
+
   Future<String> getStorageDirectoryDescription() async {
     final privateRoot = await _fileStorageService.getBaseDirectoryPath();
     if (!_shouldTryGallerySave()) {
@@ -176,6 +218,77 @@ class MediaSaveService {
     }
     return 'Gallery: Pictures/Xviewer/<twitter-id>, '
         'Preview cache: $privateRoot/<twitter-id>';
+  }
+
+  Future<SavedMediaRecord> _buildImportedRecord({
+    required File file,
+    required String baseDirectory,
+    required Set<String> existingRecordIds,
+  }) async {
+    final fileName = p.basename(file.path);
+    final stem = p.basenameWithoutExtension(fileName);
+    final separatorIndex = stem.indexOf('_');
+    final postId = separatorIndex <= 0
+        ? stem
+        : stem.substring(0, separatorIndex);
+    final mediaKey = separatorIndex <= 0
+        ? stem
+        : stem.substring(separatorIndex + 1);
+    final authorUsername = _resolveImportedAuthorUsername(
+      filePath: file.path,
+      baseDirectory: baseDirectory,
+    );
+    final recordId = _deduplicateRecordId(
+      stem.isEmpty ? file.path.hashCode.toString() : stem,
+      existingRecordIds,
+    );
+    final savedAt = await file.lastModified();
+
+    return SavedMediaRecord(
+      recordId: recordId,
+      postId: postId,
+      mediaKey: mediaKey,
+      authorName: authorUsername,
+      authorUsername: authorUsername,
+      text: '',
+      imageUrl: file.uri.toString(),
+      sourceImageUrl: file.uri.toString(),
+      localSavedPath: file.path,
+      previewFilePath: file.path,
+      originalPostUrl: postId.isEmpty
+          ? ''
+          : 'https://x.com/$authorUsername/status/$postId',
+      createdAt: savedAt,
+      savedAt: savedAt,
+      saveLocationType: SaveLocationType.appPrivate,
+      galleryDisplayName: fileName,
+    );
+  }
+
+  String _resolveImportedAuthorUsername({
+    required String filePath,
+    required String baseDirectory,
+  }) {
+    final parentPath = p.normalize(p.dirname(filePath));
+    if (parentPath == baseDirectory) {
+      return 'unknown_user';
+    }
+
+    final parentName = p.basename(parentPath).trim();
+    return parentName.isEmpty ? 'unknown_user' : parentName;
+  }
+
+  String _deduplicateRecordId(
+    String preferredId,
+    Set<String> existingRecordIds,
+  ) {
+    var candidate = preferredId;
+    var suffix = 2;
+    while (existingRecordIds.contains(candidate)) {
+      candidate = '${preferredId}_$suffix';
+      suffix += 1;
+    }
+    return candidate;
   }
 
   Future<SavedMediaRecord?> _migrateRecordToAuthorFolder(
