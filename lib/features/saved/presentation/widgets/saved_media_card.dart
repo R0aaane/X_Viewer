@@ -14,6 +14,7 @@ class SavedMediaCard extends StatelessWidget {
     this.compactMode = false,
     required this.onOpen,
     required this.onToggleFavorite,
+    required this.onOpenCreatorSearch,
     required this.onOpenPost,
     required this.onDelete,
   });
@@ -23,6 +24,7 @@ class SavedMediaCard extends StatelessWidget {
   final bool compactMode;
   final VoidCallback onOpen;
   final VoidCallback onToggleFavorite;
+  final VoidCallback onOpenCreatorSearch;
   final VoidCallback onOpenPost;
   final VoidCallback onDelete;
 
@@ -54,12 +56,14 @@ class SavedMediaCard extends StatelessWidget {
                   image: image,
                   compactMode: compactMode,
                   onToggleFavorite: onToggleFavorite,
+                  onOpenCreatorSearch: onOpenCreatorSearch,
                   onOpenPost: onOpenPost,
                 )
               : _ListBody(
                   record: record,
                   image: image,
                   onToggleFavorite: onToggleFavorite,
+                  onOpenCreatorSearch: onOpenCreatorSearch,
                   onOpenPost: onOpenPost,
                   onDelete: onDelete,
                 ),
@@ -75,6 +79,7 @@ class _GridBody extends StatelessWidget {
     required this.image,
     required this.compactMode,
     required this.onToggleFavorite,
+    required this.onOpenCreatorSearch,
     required this.onOpenPost,
   });
 
@@ -82,6 +87,7 @@ class _GridBody extends StatelessWidget {
   final Widget image;
   final bool compactMode;
   final VoidCallback onToggleFavorite;
+  final VoidCallback onOpenCreatorSearch;
   final VoidCallback onOpenPost;
 
   @override
@@ -116,10 +122,9 @@ class _GridBody extends StatelessWidget {
           ),
         ),
         SizedBox(height: compactMode ? 8 : 12),
-        Text(
-          record.authorName,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        _AuthorNameButton(
+          name: record.authorName,
+          onPressed: onOpenCreatorSearch,
           style: compactMode
               ? theme.textTheme.titleSmall
               : theme.textTheme.titleMedium,
@@ -185,6 +190,7 @@ class _ListBody extends StatelessWidget {
     required this.record,
     required this.image,
     required this.onToggleFavorite,
+    required this.onOpenCreatorSearch,
     required this.onOpenPost,
     required this.onDelete,
   });
@@ -192,6 +198,7 @@ class _ListBody extends StatelessWidget {
   final SavedMediaRecord record;
   final Widget image;
   final VoidCallback onToggleFavorite;
+  final VoidCallback onOpenCreatorSearch;
   final VoidCallback onOpenPost;
   final VoidCallback onDelete;
 
@@ -213,8 +220,9 @@ class _ListBody extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          record.authorName,
+                        _AuthorNameButton(
+                          name: record.authorName,
+                          onPressed: onOpenCreatorSearch,
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         const SizedBox(height: 2),
@@ -292,6 +300,43 @@ class _ListBody extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _AuthorNameButton extends StatelessWidget {
+  const _AuthorNameButton({
+    required this.name,
+    required this.onPressed,
+    required this.style,
+  });
+
+  final String name;
+  final VoidCallback onPressed;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: 'Search creator',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style?.copyWith(
+              color: colorScheme.primary,
+              decoration: TextDecoration.underline,
+              decorationColor: colorScheme.primary,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

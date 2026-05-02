@@ -12,6 +12,7 @@ import '../../../settings/presentation/widgets/app_preferences_dialog.dart';
 import '../../../../widgets/async_value_view.dart';
 import '../../../../widgets/section_empty_view.dart';
 import '../providers/saved_media_controller.dart';
+import '../widgets/creator_search_sheet.dart';
 import '../widgets/saved_media_card.dart';
 import '../widgets/saved_media_filter_bar.dart';
 
@@ -291,6 +292,12 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
                             extra: viewerContext,
                           ),
                           onToggleFavorite: () => _toggleFavorite(record.recordId),
+                          onOpenCreatorSearch: () => showCreatorSearchSheet(
+                            context: context,
+                            ref: ref,
+                            authorName: record.authorName,
+                            authorUsername: record.authorUsername,
+                          ),
                           onOpenPost: () => _openPost(record.originalPostUrl),
                           onDelete: () => _deleteRecord(record.recordId),
                         );

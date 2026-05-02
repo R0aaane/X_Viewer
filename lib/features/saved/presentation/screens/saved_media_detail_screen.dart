@@ -11,6 +11,7 @@ import '../../../../services/service_providers.dart';
 import '../../../../widgets/section_empty_view.dart';
 import '../models/saved_media_viewer_context.dart';
 import '../providers/saved_media_controller.dart';
+import '../widgets/creator_search_sheet.dart';
 
 class SavedMediaDetailScreen extends ConsumerStatefulWidget {
   const SavedMediaDetailScreen({
@@ -177,9 +178,14 @@ class _SavedMediaDetailScreenState
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  record.authorName,
-                                  style: Theme.of(context).textTheme.headlineSmall,
+                                _CreatorNameButton(
+                                  name: record.authorName,
+                                  onPressed: () => showCreatorSearchSheet(
+                                    context: context,
+                                    ref: ref,
+                                    authorName: record.authorName,
+                                    authorUsername: record.authorUsername,
+                                  ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
@@ -478,6 +484,41 @@ class _NavigatePreviousIntent extends Intent {
 
 class _NavigateNextIntent extends Intent {
   const _NavigateNextIntent();
+}
+
+class _CreatorNameButton extends StatelessWidget {
+  const _CreatorNameButton({
+    required this.name,
+    required this.onPressed,
+  });
+
+  final String name;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: 'Search creator',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Text(
+            name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: colorScheme.primary,
+                  decoration: TextDecoration.underline,
+                  decorationColor: colorScheme.primary,
+                ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ReaderNavigationButton extends StatelessWidget {
