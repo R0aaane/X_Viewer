@@ -12,6 +12,7 @@ import '../../../../widgets/section_empty_view.dart';
 import '../models/saved_media_viewer_context.dart';
 import '../providers/saved_media_controller.dart';
 import '../widgets/creator_search_sheet.dart';
+import '../widgets/creator_site_badges.dart';
 
 class SavedMediaDetailScreen extends ConsumerStatefulWidget {
   const SavedMediaDetailScreen({
@@ -192,6 +193,7 @@ class _SavedMediaDetailScreenState
                                   '@${record.authorUsername}',
                                   style: Theme.of(context).textTheme.titleMedium,
                                 ),
+                                CreatorSiteBadges(record: record),
                               ],
                             ),
                           ),

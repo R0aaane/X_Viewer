@@ -7,6 +7,18 @@ enum CreatorSearchTarget {
   crossSiteSearch,
 }
 
+class CreatorSearchMatch {
+  const CreatorSearchMatch({
+    required this.target,
+    required this.title,
+    required this.url,
+  });
+
+  final CreatorSearchTarget target;
+  final String title;
+  final String url;
+}
+
 extension CreatorSearchTargetDetails on CreatorSearchTarget {
   String get label {
     return switch (this) {
@@ -26,6 +38,15 @@ extension CreatorSearchTargetDetails on CreatorSearchTarget {
     };
   }
 
+  String get mark {
+    return switch (this) {
+      CreatorSearchTarget.hitomi => 'H',
+      CreatorSearchTarget.kemono => 'K',
+      CreatorSearchTarget.dddSmart => 'D',
+      CreatorSearchTarget.crossSiteSearch => 'G',
+    };
+  }
+
   IconData get icon {
     return switch (this) {
       CreatorSearchTarget.hitomi => Icons.image_search_rounded,
@@ -42,7 +63,7 @@ extension CreatorSearchTargetDetails on CreatorSearchTarget {
         'https://hitomi.la/search.html?${Uri.encodeComponent(query)}',
       ),
       CreatorSearchTarget.kemono => Uri.https(
-        'kemono.su',
+        'kemono.cr',
         '/artists',
         {'q': query},
       ),
@@ -55,8 +76,8 @@ extension CreatorSearchTargetDetails on CreatorSearchTarget {
         'www.google.com',
         '/search',
         {
-          'q':
-              '$query (site:hitomi.la OR site:kemono.su OR site:ddd-smart.net)',
+          'q': '$query (site:hitomi.la OR site:kemono.su OR '
+              'site:kemono.cr OR site:ddd-smart.net)',
         },
       ),
     };

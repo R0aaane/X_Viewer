@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/utils/date_formatter.dart';
 import '../../../../domain/models/save_location_type.dart';
 import '../../../../domain/models/saved_media_record.dart';
+import 'creator_site_badges.dart';
 
 class SavedMediaCard extends StatelessWidget {
   const SavedMediaCard({
@@ -135,6 +136,7 @@ class _GridBody extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.bodySmall,
         ),
+        CreatorSiteBadges(record: record, compact: compactMode),
         if (!compactMode) ...[
           const SizedBox(height: 8),
           Text(
@@ -227,6 +229,7 @@ class _ListBody extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text('@${record.authorUsername}'),
+                        CreatorSiteBadges(record: record),
                       ],
                     ),
                   ),
