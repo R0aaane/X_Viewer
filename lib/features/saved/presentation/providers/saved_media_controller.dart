@@ -11,6 +11,7 @@ import '../../../../services/file_storage_service.dart';
 import '../../../../services/gallery_save_service.dart';
 import '../../../../services/image_download_service.dart';
 import '../../../../services/media_save_service.dart';
+import '../../../../services/service_providers.dart';
 import '../models/saved_media_filter_state.dart';
 
 final dioProvider = Provider<Dio>((ref) => Dio());
@@ -111,7 +112,7 @@ class SavedMediaController extends AsyncNotifier<List<SavedMediaRecord>> {
     final mediaSaveService = ref.read(mediaSaveServiceProvider);
     await mediaSaveService.importExistingSavedImageFiles();
     await mediaSaveService.migrateSavedMediaToAuthorFolders();
-    return ref.read(savedMediaRepositoryProvider).getAll();
+    return _getAllWithDisplayNameCompletion();
   }
 
   Future<SaveImageResult> saveImage({
@@ -121,13 +122,13 @@ class SavedMediaController extends AsyncNotifier<List<SavedMediaRecord>> {
     final result = await ref
         .read(mediaSaveServiceProvider)
         .saveImage(post: post, image: image);
-    state = AsyncData(await ref.read(savedMediaRepositoryProvider).getAll());
+    state = AsyncData(await _getAllWithDisplayNameCompletion());
     return result;
   }
 
   Future<void> deleteRecord(SavedMediaRecord record) async {
     await ref.read(mediaSaveServiceProvider).deleteRecord(record);
-    state = AsyncData(await ref.read(savedMediaRepositoryProvider).getAll());
+    state = AsyncData(await _getAllWithDisplayNameCompletion());
   }
 
   Future<void> toggleFavorite(String recordId) async {
@@ -138,7 +139,7 @@ class SavedMediaController extends AsyncNotifier<List<SavedMediaRecord>> {
     }
 
     await repository.save(record.copyWith(favorite: !record.favorite));
-    state = AsyncData(await repository.getAll());
+    state = AsyncData(await _getAllWithDisplayNameCompletion());
   }
 
   Future<void> addTag({
@@ -158,7 +159,7 @@ class SavedMediaController extends AsyncNotifier<List<SavedMediaRecord>> {
 
     final updatedTags = {...record.tags, normalizedTag}.toList()..sort();
     await repository.save(record.copyWith(tags: updatedTags));
-    state = AsyncData(await repository.getAll());
+    state = AsyncData(await _getAllWithDisplayNameCompletion());
   }
 
   Future<void> removeTag({
@@ -173,7 +174,37 @@ class SavedMediaController extends AsyncNotifier<List<SavedMediaRecord>> {
 
     final updatedTags = record.tags.where((entry) => entry != tag).toList();
     await repository.save(record.copyWith(tags: updatedTags));
-    state = AsyncData(await repository.getAll());
+    state = AsyncData(await _getAllWithDisplayNameCompletion());
+  }
+
+  Future<void> applyAuthorDisplayName({
+    required String authorUsername,
+    required String displayName,
+  }) async {
+    final username = authorUsername.trim();
+    final name = displayName.trim();
+    if (username.isEmpty || name.isEmpty) {
+      return;
+    }
+
+    await ref.read(creatorDisplayNameServiceProvider).saveDisplayName(
+          authorUsername: username,
+          displayName: name,
+        );
+
+    final repository = ref.read(savedMediaRepositoryProvider);
+    final records = await repository.getAll();
+    for (final record in records) {
+      if (_normalizeUsername(record.authorUsername) !=
+          _normalizeUsername(username)) {
+        continue;
+      }
+      if (!_isMissingDisplayName(record)) {
+        continue;
+      }
+      await repository.save(record.copyWith(authorName: name));
+    }
+    state = AsyncData(await _getAllWithDisplayNameCompletion());
   }
 
   Future<String> getStorageDirectory() {
@@ -190,6 +221,53 @@ class SavedMediaController extends AsyncNotifier<List<SavedMediaRecord>> {
       return null;
     }
     return normalized;
+  }
+
+  Future<List<SavedMediaRecord>> _getAllWithDisplayNameCompletion() async {
+    final repository = ref.read(savedMediaRepositoryProvider);
+    final records = await repository.getAll();
+    final knownNames = <String, String>{};
+
+    for (final record in records) {
+      if (_isMissingDisplayName(record)) {
+        continue;
+      }
+      knownNames[_normalizeUsername(record.authorUsername)] = record.authorName;
+    }
+
+    final overrides =
+        await ref.read(creatorDisplayNameServiceProvider).getAllDisplayNames();
+    knownNames.addAll(overrides);
+
+    var changed = false;
+    final completed = <SavedMediaRecord>[];
+    for (final record in records) {
+      final name = knownNames[_normalizeUsername(record.authorUsername)];
+      if (name == null || name.isEmpty || !_isMissingDisplayName(record)) {
+        completed.add(record);
+        continue;
+      }
+
+      final updated = record.copyWith(authorName: name);
+      await repository.save(updated);
+      completed.add(updated);
+      changed = true;
+    }
+
+    return changed ? repository.getAll() : completed;
+  }
+
+  bool _isMissingDisplayName(SavedMediaRecord record) {
+    final name = record.authorName.trim();
+    final username = record.authorUsername.trim();
+    return name.isEmpty ||
+        name == 'Unknown' ||
+        name == 'unknown_user' ||
+        _normalizeUsername(name) == _normalizeUsername(username);
+  }
+
+  String _normalizeUsername(String value) {
+    return value.trim().replaceFirst(RegExp(r'^@+'), '').toLowerCase();
   }
 }
 

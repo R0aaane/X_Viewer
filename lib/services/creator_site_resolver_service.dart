@@ -93,7 +93,6 @@ class CreatorSiteResolverService {
     var bestScore = 0.0;
 
     for (final entry in artistPattern.allMatches(html)) {
-      final href = entry.group(1) ?? '';
       final label = _stripHtml(entry.group(3) ?? '');
       final normalizedLabel = _normalizeForMatch(label);
       if (normalizedLabel.isEmpty) {
@@ -107,7 +106,7 @@ class CreatorSiteResolverService {
           bestMatch = CreatorSearchMatch(
             target: CreatorSearchTarget.hitomi,
             title: label,
-            url: _absoluteUrl('https://hitomi.la', href),
+            url: CreatorSearchTarget.hitomi.buildUri(label).toString(),
           );
         }
       }
@@ -117,6 +116,32 @@ class CreatorSiteResolverService {
   }
 
   Future<CreatorSearchMatch?> _resolveKemono(List<String> candidates) async {
+    for (final candidate in candidates) {
+      try {
+        final uri = Uri.https(
+          'kemono-api.mbaharip.com',
+          '/search',
+          {'keyword': candidate, 'itemsPerPage': '10'},
+        );
+        final response = await _dio.get<String>(
+          uri.toString(),
+          options: _plainOptions(),
+        );
+        final match = _findBestKemonoApiMatch(
+          jsonDecode(response.data ?? ''),
+          candidates,
+          'https://kemono.cr',
+        );
+        if (match != null) {
+          return match;
+        }
+      } catch (error) {
+        debugPrint(
+          '[xviewer][flutter] kemono search API lookup failed: $error',
+        );
+      }
+    }
+
     for (final origin in _kemonoOrigins) {
       for (final endpoint in const [
         '/api/v1/creators',
@@ -187,14 +212,15 @@ class CreatorSiteResolverService {
     List<String> candidates,
     String origin,
   ) {
-    if (data is! List) {
+    final entries = data is Map ? data['data'] : data;
+    if (entries is! List) {
       return null;
     }
 
     CreatorSearchMatch? bestMatch;
     var bestScore = 0.0;
 
-    for (final entry in data.whereType<Map>()) {
+    for (final entry in entries.whereType<Map>()) {
       final name = (entry['name'] ?? '').toString();
       final service = (entry['service'] ?? '').toString();
       final id = (entry['id'] ?? entry['user_id'] ?? '').toString();
@@ -264,20 +290,19 @@ class CreatorSiteResolverService {
 
   CreatorSearchMatch? _findFirstDddSmartMatch(String html, String candidate) {
     final linkPattern = RegExp(
-      r'href="([^"]*circle_index\.php\?h=[^"]+)"',
+      r'<a[^>]+href="([^"]*circle_index\.php\?h=[^"]+)"[^>]*>(.*?)</a>',
       caseSensitive: false,
+      dotAll: true,
     );
     for (final match in linkPattern.allMatches(html)) {
-      final start = (match.start - 260).clamp(0, html.length).toInt();
-      final end = (match.end + 260).clamp(0, html.length).toInt();
-      final surroundingText = _stripHtml(html.substring(start, end));
-      if (_scoreFlexibleMatch(surroundingText, candidate) < 0.70) {
+      final label = _stripHtml(match.group(2) ?? '');
+      if (_scoreFlexibleMatch(label, candidate) < 0.84) {
         continue;
       }
 
       return CreatorSearchMatch(
         target: CreatorSearchTarget.dddSmart,
-        title: candidate,
+        title: label,
         url: _absoluteUrl('https://ddd-smart.net', match.group(1) ?? ''),
       );
     }
@@ -287,6 +312,7 @@ class CreatorSiteResolverService {
   List<String> _buildCandidates(String authorName, String authorUsername) {
     final values = <String>[
       authorName,
+      ..._nameVariants(authorName),
       authorUsername,
       authorUsername.replaceAll('_', ' '),
       authorUsername.replaceAll('_', ''),
@@ -296,6 +322,27 @@ class CreatorSiteResolverService {
         .where((value) => value.isNotEmpty)
         .toSet()
         .toList(growable: false);
+  }
+
+  List<String> _nameVariants(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return const <String>[];
+    }
+
+    final withoutDecorations = trimmed
+        .replaceAll(RegExp(r'[\(\[].*?[\)\]]'), ' ')
+        .replaceAll(RegExp(r'@[a-zA-Z0-9_]+'), ' ')
+        .trim();
+    final splitParts = withoutDecorations
+        .split(RegExp(r'[/|,\s]+'))
+        .map((part) => part.trim())
+        .where((part) => part.length >= 2);
+
+    return <String>[
+      withoutDecorations,
+      ...splitParts,
+    ];
   }
 
   Options _plainOptions() {

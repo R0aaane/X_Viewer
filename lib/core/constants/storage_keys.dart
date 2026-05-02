@@ -9,4 +9,6 @@ abstract final class StorageKeys {
   static const savedItemsLabel = 'saved_items_label';
   static const savedMediaPreferredColumnCount =
       'saved_media_preferred_column_count';
+  static const creatorDisplayNameOverrides =
+      'creator_display_name_overrides';
 }

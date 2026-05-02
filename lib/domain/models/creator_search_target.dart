@@ -47,6 +47,16 @@ extension CreatorSearchTargetDetails on CreatorSearchTarget {
     };
   }
 
+  String get faviconUrl {
+    return switch (this) {
+      CreatorSearchTarget.hitomi => 'https://hitomi.la/favicon.ico',
+      CreatorSearchTarget.kemono => 'https://kemono.cr/favicon.ico',
+      CreatorSearchTarget.dddSmart => 'https://ddd-smart.net/favicon.ico',
+      CreatorSearchTarget.crossSiteSearch =>
+        'https://www.google.com/favicon.ico',
+    };
+  }
+
   IconData get icon {
     return switch (this) {
       CreatorSearchTarget.hitomi => Icons.image_search_rounded,
@@ -60,7 +70,8 @@ extension CreatorSearchTargetDetails on CreatorSearchTarget {
     final query = creatorName.trim();
     return switch (this) {
       CreatorSearchTarget.hitomi => Uri.parse(
-        'https://hitomi.la/search.html?${Uri.encodeComponent(query)}',
+        'https://hitomi.la/search.html?'
+        '${Uri.encodeComponent('artist:$query language:japanese')}',
       ),
       CreatorSearchTarget.kemono => Uri.https(
         'kemono.cr',
