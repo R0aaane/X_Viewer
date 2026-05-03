@@ -9,6 +9,7 @@ import '../../../../widgets/async_value_view.dart';
 import '../../../../widgets/section_empty_view.dart';
 import '../models/saved_media_viewer_context.dart';
 import '../providers/saved_media_controller.dart';
+import '../widgets/creator_lookup_refresh.dart';
 import '../widgets/creator_search_sheet.dart';
 import '../widgets/saved_media_card.dart';
 
@@ -37,6 +38,25 @@ class SavedAuthorMediaScreen extends ConsumerWidget {
           icon: const Icon(Icons.arrow_back_rounded),
           tooltip: 'Back to saved authors',
         ),
+        actions: [
+          IconButton(
+            onPressed: () async {
+              final records =
+                  ref.read(savedMediaControllerProvider).valueOrNull ??
+                      const <SavedMediaRecord>[];
+              final authorRecords = records
+                  .where((record) => record.authorUsername == authorUsername)
+                  .toList(growable: false);
+              await refreshCreatorLookups(
+                context: context,
+                ref: ref,
+                records: authorRecords,
+              );
+            },
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Search this creator',
+          ),
+        ],
       ),
       body: AsyncValueView(
         value: savedState,

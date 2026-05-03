@@ -13,6 +13,7 @@ import '../../../settings/presentation/widgets/app_preferences_dialog.dart';
 import '../../../../widgets/async_value_view.dart';
 import '../../../../widgets/section_empty_view.dart';
 import '../providers/saved_media_controller.dart';
+import '../widgets/creator_lookup_refresh.dart';
 import '../widgets/creator_site_badges.dart';
 import '../widgets/saved_media_filter_bar.dart';
 
@@ -123,6 +124,15 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
           tooltip: 'Back to timeline',
         ),
         actions: [
+          IconButton(
+            onPressed: () => refreshCreatorLookups(
+              context: context,
+              ref: ref,
+              records: filteredRecords,
+            ),
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Search visible creators',
+          ),
           PopupMenuButton<int>(
             tooltip: 'Columns',
             initialValue: _preferredColumnCount,

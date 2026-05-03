@@ -24,14 +24,19 @@ class CreatorSiteResolverService {
     required String authorName,
     required String authorUsername,
     bool allowNetwork = true,
+    bool refresh = false,
   }) {
     final cacheKey =
-        '${authorName.trim()}|${authorUsername.trim()}|network=$allowNetwork';
+        '${authorName.trim()}|${authorUsername.trim()}|network=$allowNetwork|refresh=$refresh';
+    if (refresh) {
+      _cache.remove(cacheKey);
+    }
     return _cache.putIfAbsent(cacheKey, () {
       return _resolveUncached(
         authorName: authorName,
         authorUsername: authorUsername,
         allowNetwork: allowNetwork,
+        refresh: refresh,
       );
     });
   }
@@ -40,6 +45,7 @@ class CreatorSiteResolverService {
     required String authorName,
     required String authorUsername,
     required bool allowNetwork,
+    required bool refresh,
   }) async {
     final authorNameCandidates = _buildAuthorNameCandidates(authorName);
     final usernameCandidates = _buildUsernameCandidates(authorUsername);
@@ -48,7 +54,9 @@ class CreatorSiteResolverService {
     }
 
     final persisted = await _loadPersistedMatches(authorUsername);
-    final persistedTargets = persisted.map((match) => match.target).toSet();
+    final persistedTargets = refresh
+        ? <CreatorSearchTarget>{}
+        : persisted.map((match) => match.target).toSet();
     if (!allowNetwork) {
       return persisted;
     }
@@ -76,12 +84,10 @@ class CreatorSiteResolverService {
               usernameCandidates,
             ),
     ]);
-    final matches = [
-      ...persisted,
-      ...results.whereType<CreatorSearchMatch>(),
-    ].toList(
-          growable: false,
-        );
+    final matches = _mergeMatches(
+      persisted,
+      results.whereType<CreatorSearchMatch>(),
+    );
     if (matches.isNotEmpty) {
       await _savePersistedMatches(
         authorUsername: authorUsername,
@@ -89,6 +95,20 @@ class CreatorSiteResolverService {
       );
     }
     return matches;
+  }
+
+  List<CreatorSearchMatch> _mergeMatches(
+    Iterable<CreatorSearchMatch> existing,
+    Iterable<CreatorSearchMatch> updates,
+  ) {
+    final byTarget = <CreatorSearchTarget, CreatorSearchMatch>{};
+    for (final match in existing) {
+      byTarget[match.target] = match;
+    }
+    for (final match in updates) {
+      byTarget[match.target] = match;
+    }
+    return byTarget.values.toList(growable: false);
   }
 
   Future<CreatorSearchMatch?> _resolveHitomi(List<String> candidates) async {
@@ -503,14 +523,23 @@ class CreatorSiteResolverService {
     final withoutDecorations = trimmed
         .replaceAll(RegExp(r'[\(\[].*?[\)\]]'), ' ')
         .replaceAll(RegExp(r'@[a-zA-Z0-9_]+'), ' ')
+        .replaceAll(
+          RegExp(
+            r'[^\u3040-\u30ff\u3400-\u9fffA-Za-z0-9_\s]+',
+            unicode: true,
+          ),
+          ' ',
+        )
         .trim();
     final splitParts = withoutDecorations
         .split(RegExp(r'[/|,\s]+'))
         .map((part) => part.trim())
         .where((part) => part.length >= 2);
+    final compacted = withoutDecorations.replaceAll(RegExp(r'\s+'), '');
 
     return <String>[
       withoutDecorations,
+      compacted,
       ...splitParts,
     ];
   }

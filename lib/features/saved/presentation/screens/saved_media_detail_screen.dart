@@ -193,7 +193,10 @@ class _SavedMediaDetailScreenState
                                   '@${record.authorUsername}',
                                   style: Theme.of(context).textTheme.titleMedium,
                                 ),
-                                CreatorSiteBadges(record: record),
+                                CreatorSiteBadges(
+                                  record: record,
+                                  allowNetworkLookup: true,
+                                ),
                               ],
                             ),
                           ),
