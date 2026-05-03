@@ -6,31 +6,59 @@ import '../../../../domain/models/saved_media_record.dart';
 import '../../../../services/service_providers.dart';
 import '../providers/saved_media_controller.dart';
 
-class CreatorSiteBadges extends ConsumerWidget {
+class CreatorSiteBadges extends ConsumerStatefulWidget {
   const CreatorSiteBadges({
     super.key,
     required this.record,
     this.compact = false,
+    this.allowNetworkLookup = false,
   });
 
   final SavedMediaRecord record;
   final bool compact;
+  final bool allowNetworkLookup;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CreatorSiteBadges> createState() => _CreatorSiteBadgesState();
+}
+
+class _CreatorSiteBadgesState extends ConsumerState<CreatorSiteBadges> {
+  late Future<_CreatorSiteBadgeState> _stateFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _stateFuture = _loadState();
+  }
+
+  @override
+  void didUpdateWidget(CreatorSiteBadges oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.record.authorUsername != widget.record.authorUsername ||
+        oldWidget.record.authorName != widget.record.authorName ||
+        oldWidget.allowNetworkLookup != widget.allowNetworkLookup) {
+      _stateFuture = _loadState();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return FutureBuilder<_CreatorSiteBadgeState>(
-      future: _loadState(ref),
+      future: _stateFuture,
       builder: (context, snapshot) {
         final data = snapshot.data;
         final matches = data?.matches ?? const <CreatorSearchMatch>[];
         final needsDisplayName = data?.needsDisplayName ??
-            _needsDisplayName(record.authorName, record.authorUsername);
+            _needsDisplayName(
+              widget.record.authorName,
+              widget.record.authorUsername,
+            );
         if (matches.isEmpty && !needsDisplayName) {
           return const SizedBox.shrink();
         }
 
         return Padding(
-          padding: EdgeInsets.only(top: compact ? 4 : 6),
+          padding: EdgeInsets.only(top: widget.compact ? 4 : 6),
           child: Wrap(
             spacing: 6,
             runSpacing: 6,
@@ -38,13 +66,13 @@ class CreatorSiteBadges extends ConsumerWidget {
               ...matches.map((match) {
                 return _CreatorSiteBadge(
                   match: match,
-                  compact: compact,
+                  compact: widget.compact,
                 );
               }),
               if (needsDisplayName)
                 _DisplayNameLookupBadge(
-                  record: record,
-                  compact: compact,
+                  record: widget.record,
+                  compact: widget.compact,
                 ),
             ],
           ),
@@ -53,22 +81,23 @@ class CreatorSiteBadges extends ConsumerWidget {
     );
   }
 
-  Future<_CreatorSiteBadgeState> _loadState(WidgetRef ref) async {
+  Future<_CreatorSiteBadgeState> _loadState() async {
     final displayNameService = ref.read(creatorDisplayNameServiceProvider);
     final localName = await displayNameService.findLocalDisplayName(
-      record.authorUsername,
+      widget.record.authorUsername,
     );
-    final effectiveAuthorName = (localName ?? record.authorName).trim();
+    final effectiveAuthorName = (localName ?? widget.record.authorName).trim();
     final matches = await ref.read(creatorSiteResolverServiceProvider).resolve(
           authorName: effectiveAuthorName,
-          authorUsername: record.authorUsername,
+          authorUsername: widget.record.authorUsername,
+          allowNetwork: widget.allowNetworkLookup,
         );
 
     return _CreatorSiteBadgeState(
       matches: matches,
       needsDisplayName: _needsDisplayName(
         effectiveAuthorName,
-        record.authorUsername,
+        widget.record.authorUsername,
       ),
     );
   }
@@ -122,19 +151,10 @@ class _CreatorSiteBadge extends ConsumerWidget {
               horizontal: compact ? 5 : 6,
               vertical: compact ? 4 : 5,
             ),
-            child: Image.network(
-              match.target.faviconUrl,
-              width: compact ? 14 : 16,
-              height: compact ? 14 : 16,
-              errorBuilder: (context, error, stackTrace) {
-                return Text(
-                  match.target.mark,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: colors.$2,
-                        fontWeight: FontWeight.w700,
-                      ),
-                );
-              },
+            child: _TargetFavicon(
+              target: match.target,
+              size: compact ? 14 : 16,
+              fallbackColor: colors.$2,
             ),
           ),
         ),
@@ -184,6 +204,48 @@ class _CreatorSiteBadge extends ConsumerWidget {
   }
 }
 
+class _TargetFavicon extends StatelessWidget {
+  const _TargetFavicon({
+    required this.target,
+    required this.size,
+    required this.fallbackColor,
+  });
+
+  final CreatorSearchTarget target;
+  final double size;
+  final Color fallbackColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final assetPath = target.faviconAssetPath;
+    if (assetPath != null) {
+      return Image.asset(
+        assetPath,
+        width: size,
+        height: size,
+        errorBuilder: (context, error, stackTrace) => _fallback(context),
+      );
+    }
+
+    return Image.network(
+      target.faviconUrl,
+      width: size,
+      height: size,
+      errorBuilder: (context, error, stackTrace) => _fallback(context),
+    );
+  }
+
+  Widget _fallback(BuildContext context) {
+    return Text(
+      target.mark,
+      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: fallbackColor,
+            fontWeight: FontWeight.w700,
+          ),
+    );
+  }
+}
+
 class _DisplayNameLookupBadge extends ConsumerWidget {
   const _DisplayNameLookupBadge({
     required this.record,
@@ -221,18 +283,10 @@ class _DisplayNameLookupBadge extends ConsumerWidget {
   }
 
   Future<void> _lookup(BuildContext context, WidgetRef ref) async {
-    final service = ref.read(creatorDisplayNameServiceProvider);
-    final candidates = await service.searchDisplayNameCandidates(
-      record.authorUsername,
-    );
-    if (!context.mounted) {
-      return;
-    }
-
     final selected = await _showDisplayNameDialog(
       context: context,
       authorUsername: record.authorUsername,
-      candidates: candidates,
+      onOpenSearch: () => _openDisplayNameSearch(context, ref),
     );
     if (selected == null || selected.trim().isEmpty) {
       return;
@@ -252,11 +306,11 @@ class _DisplayNameLookupBadge extends ConsumerWidget {
   Future<String?> _showDisplayNameDialog({
     required BuildContext context,
     required String authorUsername,
-    required List<String> candidates,
+    required Future<void> Function() onOpenSearch,
   }) async {
     final controller = TextEditingController();
     try {
-      return showDialog<String>(
+      return await showDialog<String>(
         context: context,
         builder: (context) {
           return AlertDialog(
@@ -266,26 +320,13 @@ class _DisplayNameLookupBadge extends ConsumerWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (candidates.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Text('No display name candidates found.'),
-                    )
-                  else
-                    Flexible(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: candidates.length,
-                        itemBuilder: (context, index) {
-                          final candidate = candidates[index];
-                          return ListTile(
-                            dense: true,
-                            title: Text(candidate),
-                            onTap: () => Navigator.of(context).pop(candidate),
-                          );
-                        },
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      'Open a web search, then enter the display name to save it locally.',
+                      style: Theme.of(context).textTheme.bodyMedium,
                     ),
+                  ),
                   TextField(
                     controller: controller,
                     decoration: const InputDecoration(
@@ -297,6 +338,11 @@ class _DisplayNameLookupBadge extends ConsumerWidget {
               ),
             ),
             actions: [
+              TextButton.icon(
+                onPressed: onOpenSearch,
+                icon: const Icon(Icons.open_in_new_rounded),
+                label: const Text('Search web'),
+              ),
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
                 child: const Text('Cancel'),
@@ -311,6 +357,38 @@ class _DisplayNameLookupBadge extends ConsumerWidget {
       );
     } finally {
       controller.dispose();
+    }
+  }
+
+  Future<void> _openDisplayNameSearch(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final username = record.authorUsername.trim().replaceFirst(
+          RegExp(r'^@+'),
+          '',
+        );
+    if (username.isEmpty) {
+      return;
+    }
+
+    final uri = Uri.https(
+      'duckduckgo.com',
+      '/',
+      {'q': 'site:x.com/$username @$username X'},
+    );
+    try {
+      await ref.read(linkLauncherServiceProvider).openExternal(
+            uri.toString(),
+            debugLabel: 'display name search',
+            failureMessage: 'Could not open display name search',
+          );
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 }

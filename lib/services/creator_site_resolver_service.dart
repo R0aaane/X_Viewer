@@ -2,30 +2,36 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/constants/storage_keys.dart';
 import '../domain/models/creator_search_target.dart';
 
 class CreatorSiteResolverService {
   CreatorSiteResolverService(this._dio);
 
   static const List<String> _kemonoOrigins = [
-    'https://kemono.su',
     'https://kemono.cr',
   ];
 
   final Dio _dio;
   final Map<String, Future<List<CreatorSearchMatch>>> _cache = {};
   final Map<String, Future<Object?>> _kemonoCreatorListCache = {};
+  final Set<String> _unreachableHosts = {};
+  final Set<String> _disabledKemonoApiUrls = {};
 
   Future<List<CreatorSearchMatch>> resolve({
     required String authorName,
     required String authorUsername,
+    bool allowNetwork = true,
   }) {
-    final cacheKey = '${authorName.trim()}|${authorUsername.trim()}';
+    final cacheKey =
+        '${authorName.trim()}|${authorUsername.trim()}|network=$allowNetwork';
     return _cache.putIfAbsent(cacheKey, () {
       return _resolveUncached(
         authorName: authorName,
         authorUsername: authorUsername,
+        allowNetwork: allowNetwork,
       );
     });
   }
@@ -33,18 +39,56 @@ class CreatorSiteResolverService {
   Future<List<CreatorSearchMatch>> _resolveUncached({
     required String authorName,
     required String authorUsername,
+    required bool allowNetwork,
   }) async {
-    final candidates = _buildCandidates(authorName, authorUsername);
-    if (candidates.isEmpty) {
+    final authorNameCandidates = _buildAuthorNameCandidates(authorName);
+    final usernameCandidates = _buildUsernameCandidates(authorUsername);
+    if (authorNameCandidates.isEmpty && usernameCandidates.isEmpty) {
       return const <CreatorSearchMatch>[];
     }
 
+    final persisted = await _loadPersistedMatches(authorUsername);
+    final persistedTargets = persisted.map((match) => match.target).toSet();
+    if (!allowNetwork) {
+      return persisted;
+    }
+
     final results = await Future.wait<CreatorSearchMatch?>([
-      _resolveHitomi(candidates),
-      _resolveKemono(candidates),
-      _resolveDddSmart(candidates),
+      persistedTargets.contains(CreatorSearchTarget.hitomi)
+          ? Future<CreatorSearchMatch?>.value(null)
+          : _resolveWithFallback(
+              _resolveHitomi,
+              authorNameCandidates,
+              usernameCandidates,
+            ),
+      persistedTargets.contains(CreatorSearchTarget.kemono)
+          ? Future<CreatorSearchMatch?>.value(null)
+          : _resolveWithFallback(
+              _resolveKemono,
+              authorNameCandidates,
+              usernameCandidates,
+            ),
+      persistedTargets.contains(CreatorSearchTarget.dddSmart)
+          ? Future<CreatorSearchMatch?>.value(null)
+          : _resolveWithFallback(
+              _resolveDddSmart,
+              authorNameCandidates,
+              usernameCandidates,
+            ),
     ]);
-    return results.whereType<CreatorSearchMatch>().toList(growable: false);
+    final matches = [
+      ...persisted,
+      ...results.whereType<CreatorSearchMatch>(),
+    ].toList(
+          growable: false,
+        );
+    if (matches.isNotEmpty) {
+      await _savePersistedMatches(
+        authorUsername: authorUsername,
+        matches: matches,
+      );
+    }
+    return matches;
   }
 
   Future<CreatorSearchMatch?> _resolveHitomi(List<String> candidates) async {
@@ -78,6 +122,24 @@ class CreatorSiteResolverService {
       }
     }
     return null;
+  }
+
+  Future<CreatorSearchMatch?> _resolveWithFallback(
+    Future<CreatorSearchMatch?> Function(List<String> candidates) resolver,
+    List<String> authorNameCandidates,
+    List<String> usernameCandidates,
+  ) async {
+    final byName = authorNameCandidates.isEmpty
+        ? null
+        : await resolver(authorNameCandidates);
+    if (byName != null) {
+      return byName;
+    }
+
+    if (usernameCandidates.isEmpty) {
+      return null;
+    }
+    return resolver(usernameCandidates);
   }
 
   CreatorSearchMatch? _findBestHitomiMatch(
@@ -120,9 +182,12 @@ class CreatorSiteResolverService {
       try {
         final uri = Uri.https(
           'kemono-api.mbaharip.com',
-          '/search',
+          '/kemono',
           {'keyword': candidate, 'itemsPerPage': '10'},
         );
+        if (_disabledKemonoApiUrls.contains(uri.origin)) {
+          continue;
+        }
         final response = await _dio.get<String>(
           uri.toString(),
           options: _plainOptions(),
@@ -139,10 +204,14 @@ class CreatorSiteResolverService {
         debugPrint(
           '[xviewer][flutter] kemono search API lookup failed: $error',
         );
+        _rememberDisabledKemonoApi(error, 'https://kemono-api.mbaharip.com');
       }
     }
 
     for (final origin in _kemonoOrigins) {
+      if (_isOriginUnreachable(origin)) {
+        continue;
+      }
       for (final endpoint in const [
         '/api/v1/creators',
         '/api/v1/creators.txt',
@@ -165,6 +234,9 @@ class CreatorSiteResolverService {
     }
 
     for (final origin in _kemonoOrigins) {
+      if (_isOriginUnreachable(origin)) {
+        continue;
+      }
       for (final candidate in candidates) {
         try {
           final uri = Uri.parse(origin).replace(
@@ -193,6 +265,9 @@ class CreatorSiteResolverService {
 
   Future<Object?> _fetchKemonoCreatorList(String origin, String endpoint) {
     final url = '$origin$endpoint';
+    if (_disabledKemonoApiUrls.contains(url)) {
+      return Future<Object?>.value(null);
+    }
     return _kemonoCreatorListCache.putIfAbsent(url, () async {
       try {
         final response = await _dio.get<String>(
@@ -200,8 +275,10 @@ class CreatorSiteResolverService {
           options: _plainOptions(),
         );
         return jsonDecode(response.data ?? '');
-      } catch (_) {
+      } catch (error) {
         _kemonoCreatorListCache.remove(url);
+        _rememberUnreachableHost(error, origin);
+        _rememberDisabledKemonoApi(error, url);
         rethrow;
       }
     });
@@ -269,6 +346,78 @@ class CreatorSiteResolverService {
     return null;
   }
 
+  Future<List<CreatorSearchMatch>> _loadPersistedMatches(
+    String authorUsername,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(StorageKeys.creatorSearchMatches);
+    if (raw == null || raw.isEmpty) {
+      return const <CreatorSearchMatch>[];
+    }
+
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      return const <CreatorSearchMatch>[];
+    }
+
+    final rawMatches = decoded[_normalizeUsername(authorUsername)];
+    if (rawMatches is! List) {
+      return const <CreatorSearchMatch>[];
+    }
+
+    return rawMatches.whereType<Map>().map((entry) {
+      final targetName = (entry['target'] ?? '').toString();
+      final target = _parseTarget(targetName);
+      if (target == null) {
+        return null;
+      }
+      final title = (entry['title'] ?? '').toString();
+      final url = (entry['url'] ?? '').toString();
+      if (title.isEmpty || url.isEmpty) {
+        return null;
+      }
+      return CreatorSearchMatch(
+        target: target,
+        title: title,
+        url: url,
+      );
+    }).whereType<CreatorSearchMatch>().toList(growable: false);
+  }
+
+  Future<void> _savePersistedMatches({
+    required String authorUsername,
+    required List<CreatorSearchMatch> matches,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(StorageKeys.creatorSearchMatches);
+    final decoded = raw == null || raw.isEmpty
+        ? <String, dynamic>{}
+        : jsonDecode(raw);
+    final allMatches = decoded is Map
+        ? Map<String, dynamic>.from(decoded)
+        : <String, dynamic>{};
+    allMatches[_normalizeUsername(authorUsername)] = matches.map((match) {
+      return {
+        'target': match.target.name,
+        'title': match.title,
+        'url': match.url,
+      };
+    }).toList(growable: false);
+    await prefs.setString(
+      StorageKeys.creatorSearchMatches,
+      jsonEncode(allMatches),
+    );
+  }
+
+  CreatorSearchTarget? _parseTarget(String value) {
+    for (final target in CreatorSearchTarget.values) {
+      if (target.name == value) {
+        return target;
+      }
+    }
+    return null;
+  }
+
   Future<CreatorSearchMatch?> _resolveDddSmart(List<String> candidates) async {
     for (final candidate in candidates) {
       try {
@@ -277,7 +426,11 @@ class CreatorSiteResolverService {
           uri.toString(),
           options: _plainOptions(),
         );
-        final match = _findFirstDddSmartMatch(response.data ?? '', candidate);
+        final match = _findDddSmartMatch(
+          uri: uri,
+          html: response.data ?? '',
+          candidate: candidate,
+        );
         if (match != null) {
           return match;
         }
@@ -288,35 +441,52 @@ class CreatorSiteResolverService {
     return null;
   }
 
-  CreatorSearchMatch? _findFirstDddSmartMatch(String html, String candidate) {
-    final linkPattern = RegExp(
-      r'<a[^>]+href="([^"]*circle_index\.php\?h=[^"]+)"[^>]*>(.*?)</a>',
+  CreatorSearchMatch? _findDddSmartMatch({
+    required Uri uri,
+    required String html,
+    required String candidate,
+  }) {
+    final titleMatch = RegExp(
+      r'<title>(.*?)</title>',
       caseSensitive: false,
       dotAll: true,
-    );
-    for (final match in linkPattern.allMatches(html)) {
-      final label = _stripHtml(match.group(2) ?? '');
-      if (_scoreFlexibleMatch(label, candidate) < 0.84) {
-        continue;
-      }
-
-      return CreatorSearchMatch(
-        target: CreatorSearchTarget.dddSmart,
-        title: label,
-        url: _absoluteUrl('https://ddd-smart.net', match.group(1) ?? ''),
-      );
+    ).firstMatch(html);
+    final title = _stripHtml(titleMatch?.group(1) ?? '');
+    if (_scoreFlexibleMatch(title, candidate) < 0.70) {
+      return null;
     }
-    return null;
+
+    final countMatch = RegExp(r'-\s*(\d+)冊').firstMatch(title);
+    final count = int.tryParse(countMatch?.group(1) ?? '');
+    if (count == null || count <= 0) {
+      return null;
+    }
+
+    return CreatorSearchMatch(
+      target: CreatorSearchTarget.dddSmart,
+      title: candidate,
+      url: uri.toString(),
+    );
   }
 
-  List<String> _buildCandidates(String authorName, String authorUsername) {
+  List<String> _buildAuthorNameCandidates(String authorName) {
     final values = <String>[
       authorName,
       ..._nameVariants(authorName),
+    ];
+    return _normalizeCandidates(values);
+  }
+
+  List<String> _buildUsernameCandidates(String authorUsername) {
+    final values = <String>[
       authorUsername,
       authorUsername.replaceAll('_', ' '),
       authorUsername.replaceAll('_', ''),
     ];
+    return _normalizeCandidates(values);
+  }
+
+  List<String> _normalizeCandidates(List<String> values) {
     return values
         .map((value) => value.trim().replaceFirst(RegExp(r'^@+'), ''))
         .where((value) => value.isNotEmpty)
@@ -453,5 +623,34 @@ class CreatorSiteResolverService {
       return '$origin$href';
     }
     return '$origin/$href';
+  }
+
+  bool _isOriginUnreachable(String origin) {
+    final host = Uri.parse(origin).host;
+    return _unreachableHosts.contains(host);
+  }
+
+  void _rememberUnreachableHost(Object error, String origin) {
+    final message = error.toString().toLowerCase();
+    if (!message.contains('failed host lookup')) {
+      return;
+    }
+    final host = Uri.parse(origin).host;
+    _unreachableHosts.add(host);
+    debugPrint(
+      '[xviewer][flutter] Marked creator lookup host unreachable: $host',
+    );
+  }
+
+  void _rememberDisabledKemonoApi(Object error, String url) {
+    final statusCode = error is DioException ? error.response?.statusCode : null;
+    if (statusCode != 403 && statusCode != 404) {
+      return;
+    }
+    _disabledKemonoApiUrls.add(url);
+  }
+
+  String _normalizeUsername(String value) {
+    return value.trim().replaceFirst(RegExp(r'^@+'), '').toLowerCase();
   }
 }

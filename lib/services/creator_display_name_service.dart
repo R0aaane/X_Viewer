@@ -59,32 +59,38 @@ class CreatorDisplayNameService {
       return const <String>[];
     }
 
-    final queries = [
-      'site:x.com/$username @$username X',
-      '"@$username" "X"',
-    ];
     final candidates = <String>{};
 
-    for (final query in queries) {
-      try {
-        final uri = Uri.https('duckduckgo.com', '/html/', {'q': query});
-        final response = await _dio.get<String>(
-          uri.toString(),
-          options: Options(
-            responseType: ResponseType.plain,
-            receiveTimeout: const Duration(seconds: 8),
-            sendTimeout: const Duration(seconds: 8),
-            headers: const {
-              'user-agent': 'XViewer display name lookup',
-            },
+    try {
+      final uri = Uri.https(
+        'duckduckgo.com',
+        '/html/',
+        {'q': 'site:x.com/$username @$username X'},
+      );
+      final response = await _dio.get<String>(
+        uri.toString(),
+        options: Options(
+          responseType: ResponseType.plain,
+          receiveTimeout: const Duration(seconds: 4),
+          sendTimeout: const Duration(seconds: 4),
+          headers: const {
+            'user-agent': 'XViewer display name lookup',
+          },
+        ),
+      );
+      candidates.addAll(
+        _extractDisplayNames(
+          (response.data ?? '').substring(
+            0,
+            (response.data ?? '').length.clamp(0, 120000),
           ),
-        );
-        candidates.addAll(_extractDisplayNames(response.data ?? '', username));
-      } catch (error) {
-        debugPrint(
-          '[xviewer][flutter] display name search failed: $error',
-        );
-      }
+          username,
+        ),
+      );
+    } catch (error) {
+      debugPrint(
+        '[xviewer][flutter] display name search failed: $error',
+      );
     }
 
     return candidates.take(8).toList(growable: false);

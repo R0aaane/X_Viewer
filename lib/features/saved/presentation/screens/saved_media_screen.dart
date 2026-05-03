@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -5,15 +7,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/constants/app_routes.dart';
 import '../../../../core/constants/storage_keys.dart';
-import '../../../../services/service_providers.dart';
-import '../models/saved_media_viewer_context.dart';
+import '../../../../domain/models/saved_media_record.dart';
 import '../../../settings/presentation/providers/app_preferences_controller.dart';
 import '../../../settings/presentation/widgets/app_preferences_dialog.dart';
 import '../../../../widgets/async_value_view.dart';
 import '../../../../widgets/section_empty_view.dart';
 import '../providers/saved_media_controller.dart';
-import '../widgets/creator_search_sheet.dart';
-import '../widgets/saved_media_card.dart';
+import '../widgets/creator_site_badges.dart';
 import '../widgets/saved_media_filter_bar.dart';
 
 class SavedMediaScreen extends ConsumerStatefulWidget {
@@ -94,24 +94,6 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
     return _preferredColumnCount < maxColumnsByWidth
         ? _preferredColumnCount
         : maxColumnsByWidth;
-  }
-
-  double _computeChildAspectRatio({
-    required int columns,
-  }) {
-    if (columns <= 1) {
-      return 1.18;
-    }
-    if (columns == 2) {
-      return 0.84;
-    }
-    if (columns == 3) {
-      return 0.78;
-    }
-    if (columns == 4) {
-      return 0.72;
-    }
-    return 0.68;
   }
 
   @override
@@ -256,9 +238,12 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
                     final effectiveColumnCount =
                         _computeEffectiveColumnCount(width);
                     final compactMode = effectiveColumnCount >= 4;
-                    final childAspectRatio = _computeChildAspectRatio(
-                      columns: effectiveColumnCount,
-                    );
+                    final authorGroups = _buildAuthorGroups(filteredRecords);
+                    final childAspectRatio = effectiveColumnCount <= 1
+                        ? 1.45
+                        : effectiveColumnCount == 2
+                            ? 0.92
+                            : 0.82;
 
                     return GridView.builder(
                       padding: const EdgeInsets.all(16),
@@ -268,38 +253,15 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
                         mainAxisSpacing: _gridSpacing,
                         childAspectRatio: childAspectRatio,
                       ),
-                      itemCount: filteredRecords.length,
+                      itemCount: authorGroups.length,
                       itemBuilder: (context, index) {
-                        final record = filteredRecords[index];
-                        final viewerContext = SavedMediaViewerContext(
-                          recordIds: filteredRecords
-                              .map((entry) => entry.recordId)
-                              .toList(growable: false),
-                          initialIndex: index,
-                          sourceType: _resolveViewerSourceType(),
-                          sourceTitle: _resolveViewerSourceTitle(
-                            savedItemsLabel: savedItemsLabel,
-                            filterAuthor: filter.authorUsername,
-                            tagQuery: filter.tagQuery,
-                          ),
-                        );
-                        return SavedMediaCard(
-                          record: record,
-                          isGrid: effectiveColumnCount > 1,
+                        final group = authorGroups[index];
+                        return _AuthorGroupCard(
+                          group: group,
                           compactMode: compactMode,
                           onOpen: () => context.push(
-                            AppRoutes.savedDetailPath(record.recordId),
-                            extra: viewerContext,
+                            AppRoutes.savedAuthorPath(group.authorUsername),
                           ),
-                          onToggleFavorite: () => _toggleFavorite(record.recordId),
-                          onOpenCreatorSearch: () => showCreatorSearchSheet(
-                            context: context,
-                            ref: ref,
-                            authorName: record.authorName,
-                            authorUsername: record.authorUsername,
-                          ),
-                          onOpenPost: () => _openPost(record.originalPostUrl),
-                          onDelete: () => _deleteRecord(record.recordId),
                         );
                       },
                     );
@@ -313,58 +275,125 @@ class _SavedMediaScreenState extends ConsumerState<SavedMediaScreen> {
     );
   }
 
-  Future<void> _toggleFavorite(String recordId) async {
-    await ref.read(savedMediaControllerProvider.notifier).toggleFavorite(recordId);
+  List<_AuthorGroup> _buildAuthorGroups(List<SavedMediaRecord> records) {
+    final grouped = <String, List<SavedMediaRecord>>{};
+    for (final record in records) {
+      grouped.putIfAbsent(record.authorUsername, () => []).add(record);
+    }
+
+    final groups = grouped.entries.map((entry) {
+      final records = entry.value
+        ..sort((a, b) => b.savedAt.compareTo(a.savedAt));
+      return _AuthorGroup(
+        authorUsername: entry.key,
+        records: records,
+      );
+    }).toList(growable: false)
+      ..sort((a, b) => b.latestSavedAt.compareTo(a.latestSavedAt));
+
+    return groups;
   }
+}
 
-  Future<void> _deleteRecord(String recordId) async {
-    final record = ref.read(savedMediaRecordProvider(recordId));
-    if (record == null) {
-      return;
-    }
+class _AuthorGroup {
+  const _AuthorGroup({
+    required this.authorUsername,
+    required this.records,
+  });
 
-    await ref.read(savedMediaControllerProvider.notifier).deleteRecord(record);
-    if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Saved record removed')));
-    }
-  }
+  final String authorUsername;
+  final List<SavedMediaRecord> records;
 
-  Future<void> _openPost(String url) async {
-    try {
-      await ref.read(linkLauncherServiceProvider).openExternal(url);
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
-      }
-    }
-  }
+  SavedMediaRecord get coverRecord => records.first;
 
-  SavedMediaViewerSourceType _resolveViewerSourceType() {
-    final filter = ref.read(savedMediaFilterProvider);
-    if ((filter.authorUsername ?? '').isNotEmpty) {
-      return SavedMediaViewerSourceType.author;
-    }
-    if (filter.tagQuery.trim().isNotEmpty) {
-      return SavedMediaViewerSourceType.search;
-    }
-    return SavedMediaViewerSourceType.gallery;
-  }
+  DateTime get latestSavedAt => coverRecord.savedAt;
+}
 
-  String _resolveViewerSourceTitle({
-    required String savedItemsLabel,
-    required String? filterAuthor,
-    required String tagQuery,
-  }) {
-    if ((filterAuthor ?? '').isNotEmpty) {
-      return '@$filterAuthor';
-    }
-    if (tagQuery.trim().isNotEmpty) {
-      return 'Search: ${tagQuery.trim()}';
-    }
-    return savedItemsLabel;
+class _AuthorGroupCard extends StatelessWidget {
+  const _AuthorGroupCard({
+    required this.group,
+    required this.compactMode,
+    required this.onOpen,
+  });
+
+  final _AuthorGroup group;
+  final bool compactMode;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final record = group.coverRecord;
+    final previewFile = File(record.previewFilePath);
+    final theme = Theme.of(context);
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onOpen,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      previewFile.existsSync()
+                          ? Image.file(previewFile, fit: BoxFit.cover)
+                          : const ColoredBox(
+                              color: Color(0xFFE5E7EB),
+                              child: Icon(Icons.image_not_supported_outlined),
+                            ),
+                      Positioned(
+                        right: 8,
+                        bottom: 8,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.58),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 5,
+                            ),
+                            child: Text(
+                              '${group.records.length}',
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              SizedBox(height: compactMode ? 8 : 12),
+              Text(
+                record.authorName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: compactMode
+                    ? theme.textTheme.titleSmall
+                    : theme.textTheme.titleMedium,
+              ),
+              Text(
+                '@${group.authorUsername}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall,
+              ),
+              CreatorSiteBadges(record: record, compact: compactMode),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

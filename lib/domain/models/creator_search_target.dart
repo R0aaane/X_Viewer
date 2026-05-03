@@ -57,6 +57,15 @@ extension CreatorSearchTargetDetails on CreatorSearchTarget {
     };
   }
 
+  String? get faviconAssetPath {
+    return switch (this) {
+      CreatorSearchTarget.hitomi => 'assets/favicons/hitomi.png',
+      CreatorSearchTarget.kemono => 'assets/favicons/kemono.png',
+      CreatorSearchTarget.dddSmart => null,
+      CreatorSearchTarget.crossSiteSearch => null,
+    };
+  }
+
   IconData get icon {
     return switch (this) {
       CreatorSearchTarget.hitomi => Icons.image_search_rounded,
@@ -71,7 +80,7 @@ extension CreatorSearchTargetDetails on CreatorSearchTarget {
     return switch (this) {
       CreatorSearchTarget.hitomi => Uri.parse(
         'https://hitomi.la/search.html?'
-        '${Uri.encodeComponent('artist:$query language:japanese')}',
+        '${Uri.encodeComponent('artist:${_hitomiArtistTag(query)} language:japanese')}',
       ),
       CreatorSearchTarget.kemono => Uri.https(
         'kemono.cr',
@@ -87,10 +96,14 @@ extension CreatorSearchTargetDetails on CreatorSearchTarget {
         'www.google.com',
         '/search',
         {
-          'q': '$query (site:hitomi.la OR site:kemono.su OR '
-              'site:kemono.cr OR site:ddd-smart.net)',
+          'q': '$query (site:hitomi.la OR site:kemono.cr OR '
+              'site:ddd-smart.net)',
         },
       ),
     };
+  }
+
+  String _hitomiArtistTag(String value) {
+    return value.trim().replaceAll(RegExp(r'\s+'), '_');
   }
 }

@@ -69,7 +69,7 @@ Future<void> showCreatorSearchSheet({
             ),
             ...CreatorSearchTarget.values.map((target) {
               return ListTile(
-                leading: Icon(target.icon),
+                leading: _SearchTargetFavicon(target: target),
                 title: Text(target.label),
                 subtitle: Text(target.description),
                 trailing: const Icon(Icons.open_in_new_rounded),
@@ -100,5 +100,36 @@ Future<void> showCreatorSearchSheet({
         context,
       ).showSnackBar(SnackBar(content: Text(error.toString())));
     }
+  }
+}
+
+class _SearchTargetFavicon extends StatelessWidget {
+  const _SearchTargetFavicon({required this.target});
+
+  final CreatorSearchTarget target;
+
+  @override
+  Widget build(BuildContext context) {
+    final assetPath = target.faviconAssetPath;
+    return SizedBox.square(
+      dimension: 24,
+      child: assetPath == null
+          ? Image.network(
+              target.faviconUrl,
+              width: 20,
+              height: 20,
+              errorBuilder: (context, error, stackTrace) {
+                return Icon(target.icon, size: 22);
+              },
+            )
+          : Image.asset(
+              assetPath,
+              width: 20,
+              height: 20,
+              errorBuilder: (context, error, stackTrace) {
+                return Icon(target.icon, size: 22);
+              },
+            ),
+    );
   }
 }
